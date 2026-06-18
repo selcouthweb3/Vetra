@@ -6,7 +6,14 @@ import { isAddress } from 'viem'
 import { useVetra } from '@/hooks/useVetra'
 import { VerdictCard } from '@/components/VerdictCard'
 import { PhaseStatus } from '@/components/PhaseStatus'
-import { WalletBar } from '@/components/WalletBar'
+import dynamic from 'next/dynamic'
+
+// WalletBar reads window.ethereum — must not SSR or wagmi connector state
+// mismatches cause the Check button to stay disabled after connecting.
+const WalletBar = dynamic(
+  () => import('@/components/WalletBar').then(m => ({ default: m.WalletBar })),
+  { ssr: false },
+)
 
 export default function Home() {
   const { isConnected } = useAccount()
