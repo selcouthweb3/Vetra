@@ -1,0 +1,8 @@
+# Forge build artifacts (reproducible via `forge build`)
+out/
+cache/
+
+# Environment — contains PRIVATE_KEY
+.env
+.env.*
+!.env.example

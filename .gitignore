@@ -1,0 +1,11 @@
+# Claude Code local project settings
+.claude/
+
+# Ritual build artifacts
+.ritual-build/
+
+# Environment files at repo root
+.env
+.env.*
+!.env.example
+!*.env.example
