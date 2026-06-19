@@ -125,29 +125,38 @@ export function useVetra(): UseVetraReturn {
       }
       if (cacheHit) return
 
-      // 2. Pick executor
+      // 2. Pick executors — wrap in own try/catch so a transient RPC 0x or
+      //    decode error surfaces as a readable message instead of raw viem output.
       setPhase('fetching-executor')
-      const [executor, found] = await publicClient.readContract({
-        address: TEE_REGISTRY,
-        abi: teeRegistryAbi,
-        functionName: 'pickServiceByCapability',
-        args: [
-          0,     // HTTP_CALL capability
-          true,
-          BigInt(Date.now()),
-          5n,
-        ],
-      })
-      if (!found) throw new Error('No HTTP executor available in TEEServiceRegistry')
+      let executor: Address
+      let llmExecutor: Address
+      try {
+        const [httpAddr, httpFound] = await publicClient.readContract({
+          address: TEE_REGISTRY,
+          abi: teeRegistryAbi,
+          functionName: 'pickServiceByCapability',
+          args: [0, true, BigInt(Date.now()), 5n],
+        })
+        console.log('[useVetra] HTTP executor', { httpAddr, httpFound })
+        if (!httpFound) throw new Error('no-service')
+        executor = httpAddr as Address
 
-      // Also pick LLM executor (capability 1)
-      const [llmExecutor, llmFound] = await publicClient.readContract({
-        address: TEE_REGISTRY,
-        abi: teeRegistryAbi,
-        functionName: 'pickServiceByCapability',
-        args: [1, true, BigInt(Date.now() + 1), 5n],
-      })
-      if (!llmFound) throw new Error('No LLM executor available in TEEServiceRegistry')
+        const [llmAddr, llmFound] = await publicClient.readContract({
+          address: TEE_REGISTRY,
+          abi: teeRegistryAbi,
+          functionName: 'pickServiceByCapability',
+          args: [1, true, BigInt(Date.now() + 1), 5n],
+        })
+        console.log('[useVetra] LLM executor', { llmAddr, llmFound })
+        if (!llmFound) throw new Error('no-service')
+        llmExecutor = llmAddr as Address
+      } catch (registryErr) {
+        const raw = registryErr instanceof Error ? registryErr.message : String(registryErr)
+        if (raw === 'no-service') {
+          throw new Error('No Ritual precompile service is registered for this capability — try again later')
+        }
+        throw new Error('Ritual precompile service unavailable — try again in a few minutes')
+      }
 
       if (abortRef.current) return
 
