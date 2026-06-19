@@ -24,6 +24,7 @@ function getMetaMaskProvider() {
 export const wagmiConfig = createConfig({
   chains: [ritualChain],
   ssr: true,
+  multiInjectedProviderDiscovery: false,
   transports: {
     [ritualChain.id]: http('https://rpc.ritualfoundation.org'),
   },
