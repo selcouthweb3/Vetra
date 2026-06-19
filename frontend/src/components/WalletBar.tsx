@@ -1,110 +1,86 @@
 'use client'
 
-import { useAccount, useConnect, useDisconnect, useReadContract, useWriteContract } from 'wagmi'
-import { formatEther, parseEther } from 'viem'
-import { RITUAL_WALLET, ritualWalletAbi } from '@/lib/ritual'
 import { useState } from 'react'
+import { useAccount, useConnect, useDisconnect } from 'wagmi'
+import { Wallet, Copy, LogOut, Check } from 'lucide-react'
+import { toast } from 'sonner'
 
 export function WalletBar() {
   const { address, isConnected } = useAccount()
   const { connect, connectors }  = useConnect()
   const { disconnect }           = useDisconnect()
-  const { writeContractAsync }   = useWriteContract()
-  const [depositing, setDepositing] = useState(false)
+  const [copied, setCopied]      = useState(false)
 
-  const { data: balance, refetch } = useReadContract({
-    address: RITUAL_WALLET,
-    abi: ritualWalletAbi,
-    functionName: 'balanceOf',
-    args: address ? [address] : undefined,
-    query: { enabled: !!address, refetchInterval: 10_000 },
-  })
+  function handleConnect() {
+    const connector = connectors[0]
+    if (!connector) return
+    connect(
+      { connector },
+      {
+        onSuccess: () => toast.success('Wallet connected'),
+        onError:   (e) => toast.error(e.message),
+      }
+    )
+  }
 
-  async function deposit() {
+  function handleCopy() {
     if (!address) return
-    setDepositing(true)
-    try {
-      // Deposit 0.1 RITUAL, locked for 100,000 blocks (~9.7h) — never shortens
-      await writeContractAsync({
-        address: RITUAL_WALLET,
-        abi: ritualWalletAbi,
-        functionName: 'deposit',
-        args: [100_000n],
-        value: parseEther('0.1'),
-      })
-      await refetch()
-    } catch (e) {
-      console.error('Deposit failed', e)
-    } finally {
-      setDepositing(false)
-    }
+    navigator.clipboard.writeText(address)
+    setCopied(true)
+    toast.success('Address copied')
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  function handleDisconnect() {
+    disconnect()
+    toast.info('Wallet disconnected')
   }
 
   if (!isConnected) {
     return (
-      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-        {connectors.map(c => (
-          <button
-            key={c.id}
-            onClick={() => connect({ connector: c })}
-            style={btnStyle('#19D184')}
-          >
-            Connect {c.name}
-          </button>
-        ))}
-      </div>
+      <button
+        onClick={handleConnect}
+        className="inline-flex items-center gap-2 h-9 px-4 rounded-lg bg-emerald-400 hover:bg-emerald-300 text-zinc-950 text-sm font-semibold transition-all duration-200"
+      >
+        <Wallet className="w-3.5 h-3.5" />
+        Connect Wallet
+      </button>
     )
   }
 
-  const formattedBalance = balance !== undefined
-    ? `${Number(formatEther(balance)).toFixed(4)} RITUAL`
-    : '…'
+  const short = address ? `${address.slice(0, 6)}…${address.slice(-4)}` : ''
 
-  const needsDeposit = balance !== undefined && balance < parseEther('0.05')
+  // Deterministic gradient from address bytes
+  const hue = address ? parseInt(address.slice(2, 6), 16) % 360 : 0
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-      <span style={{ color: '#9CA3AF', fontSize: '12px', fontFamily: 'monospace' }}>
-        {address?.slice(0, 6)}…{address?.slice(-4)}
-      </span>
+    <div className="flex items-center gap-2">
+      {/* Avatar + address */}
+      <div className="flex items-center gap-2.5 h-9 px-3 rounded-lg border border-zinc-800 bg-zinc-900">
+        <div
+          className="w-5 h-5 rounded-full shrink-0"
+          style={{ background: `linear-gradient(135deg, hsl(${hue},70%,60%), hsl(${(hue + 120) % 360},70%,50%))` }}
+        />
+        <span className="font-mono text-xs text-zinc-300">{short}</span>
+      </div>
 
-      <span style={{
-        color: needsDeposit ? '#FACC15' : '#19D184',
-        fontSize: '12px',
-      }}>
-        {formattedBalance}
-      </span>
-
-      {needsDeposit && (
-        <button
-          onClick={deposit}
-          disabled={depositing}
-          style={btnStyle('#FACC15')}
-          title="Deposit 0.1 RITUAL fee reserve"
-        >
-          {depositing ? 'Depositing…' : '+ Deposit Fees'}
-        </button>
-      )}
-
+      {/* Copy */}
       <button
-        onClick={() => disconnect()}
-        style={{ ...btnStyle('#374151'), color: '#6B7280' }}
+        onClick={handleCopy}
+        className="h-9 w-9 flex items-center justify-center rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-500 hover:text-zinc-300 hover:border-zinc-700 transition-all duration-200"
+        title="Copy address"
       >
-        Disconnect
+        {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+      </button>
+
+      {/* Disconnect */}
+      <button
+        onClick={handleDisconnect}
+        className="h-9 w-9 flex items-center justify-center rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-500 hover:text-rose-400 hover:border-rose-400/30 transition-all duration-200"
+        title="Disconnect"
+      >
+        <LogOut className="w-3.5 h-3.5" />
       </button>
     </div>
   )
-}
-
-function btnStyle(accent: string) {
-  return {
-    background: 'transparent',
-    border: `1px solid ${accent}`,
-    borderRadius: '6px',
-    color: accent,
-    padding: '5px 12px',
-    fontSize: '12px',
-    cursor: 'pointer',
-    whiteSpace: 'nowrap' as const,
-  }
 }
