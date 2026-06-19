@@ -104,19 +104,26 @@ export function useVetra(): UseVetraReturn {
     setError(null)
 
     try {
-      // 1. Check cache
-      const [rawOutput, , exists] = await publicClient.readContract({
-        address: VETRA_ADDRESS,
-        abi: vetraAbi,
-        functionName: 'getResult',
-        args: [target],
-      })
-
-      if (exists && rawOutput.length > 2) {
-        setVerdict(decodeLLMOutput(rawOutput as Hex))
-        setPhase('done')
-        return
+      // 1. Check cache — getResult returns 0x (undecodable) when not cached,
+      //    so treat any decode error as a cache miss and fall through to the TX flow.
+      let cacheHit = false
+      try {
+        const [rawOutput, , exists] = await publicClient.readContract({
+          address: VETRA_ADDRESS,
+          abi: vetraAbi,
+          functionName: 'getResult',
+          args: [target],
+        })
+        console.log('[useVetra] cache check', { exists, rawOutputLen: (rawOutput as Hex).length })
+        if (exists && (rawOutput as Hex).length > 2) {
+          setVerdict(decodeLLMOutput(rawOutput as Hex))
+          setPhase('done')
+          cacheHit = true
+        }
+      } catch (cacheErr) {
+        console.log('[useVetra] cache miss (decode error, proceeding to TX flow)', cacheErr)
       }
+      if (cacheHit) return
 
       // 2. Pick executor
       setPhase('fetching-executor')
