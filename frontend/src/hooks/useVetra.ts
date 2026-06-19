@@ -1,22 +1,26 @@
 'use client'
 
 import { useState, useCallback, useRef } from 'react'
-import {
-  usePublicClient,
-  useWalletClient,
-  useReadContract,
-  useAccount,
-} from 'wagmi'
-import { encodeFunctionData, isAddress } from 'viem'
+import { usePublicClient, useWalletClient, useAccount } from 'wagmi'
+import { createPublicClient, encodeFunctionData, http, isAddress } from 'viem'
 import type { Hex, Address } from 'viem'
 import {
   VETRA_ADDRESS,
   vetraAbi,
   TEE_REGISTRY,
   teeRegistryAbi,
+  ritualChain,
   decodeLLMOutput,
   type VerdictResult,
 } from '@/lib/ritual'
+
+// Account-free public client used for all read-only calls.
+// wagmi's usePublicClient may include the connected account in eth_call 'from'
+// fields, which causes some Ritual RPC nodes to return 0x for view calls.
+const rawClient = createPublicClient({
+  chain: ritualChain,
+  transport: http('https://rpc.ritualfoundation.org'),
+})
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -108,7 +112,7 @@ export function useVetra(): UseVetraReturn {
       //    so treat any decode error as a cache miss and fall through to the TX flow.
       let cacheHit = false
       try {
-        const [rawOutput, , exists] = await publicClient.readContract({
+        const [rawOutput, , exists] = await rawClient.readContract({
           address: VETRA_ADDRESS,
           abi: vetraAbi,
           functionName: 'getResult',
@@ -128,31 +132,28 @@ export function useVetra(): UseVetraReturn {
       // 2. Pick executors
       setPhase('fetching-executor')
 
-      // Diagnostic: verify publicClient is on Ritual testnet (chain 1979).
-      // wagmi can hand the hook a client backed by MetaMask's RPC (which may be
-      // Ethereum mainnet or another chain) instead of the http() transport we
-      // configured — if so, every registry read returns 0x.
-      const clientChainId  = publicClient.chain?.id
-      const clientTransport = (publicClient as any).transport
-      console.log('[useVetra] publicClient diagnostics', {
-        chainId:      clientChainId,
-        transportUrl: clientTransport?.url ?? clientTransport?.transports?.map((t: any) => t?.value?.url),
-        registryAddr: TEE_REGISTRY,
+      // Diagnostic: compare wagmi publicClient vs rawClient transports.
+      const wagmiTransport = (publicClient as any).transport
+      const rawTransport   = (rawClient as any).transport
+      console.log('[useVetra] client transports', {
+        wagmiChainId:   publicClient.chain?.id,
+        wagmiUrl:       wagmiTransport?.url ?? wagmiTransport?.transports?.map((t: any) => t?.value?.url),
+        rawClientUrl:   rawTransport?.url,
+        rawClientChain: rawClient.chain?.id,
       })
 
-      if (clientChainId !== 1979) {
-        throw new Error(`Wrong network — please switch MetaMask to Ritual Testnet (chain 1979). Currently on chain ${clientChainId}.`)
+      if (publicClient.chain?.id !== 1979) {
+        throw new Error(`Wrong network — please switch MetaMask to Ritual Testnet (chain 1979). Currently on chain ${publicClient.chain?.id}.`)
       }
 
       let executor: Address
       let llmExecutor: Address
       try {
         const httpArgs = [0, true, BigInt(Date.now()), 5n] as const
-        console.log('[useVetra] calling pickServiceByCapability (HTTP)', {
-          address: TEE_REGISTRY,
-          args: httpArgs.map(String),
+        console.log('[useVetra] calling pickServiceByCapability via rawClient (HTTP)', {
+          address: TEE_REGISTRY, args: httpArgs.map(String),
         })
-        const [httpAddr, httpFound] = await publicClient.readContract({
+        const [httpAddr, httpFound] = await rawClient.readContract({
           address: TEE_REGISTRY,
           abi: teeRegistryAbi,
           functionName: 'pickServiceByCapability',
@@ -163,11 +164,10 @@ export function useVetra(): UseVetraReturn {
         executor = httpAddr as Address
 
         const llmArgs = [1, true, BigInt(Date.now() + 1), 5n] as const
-        console.log('[useVetra] calling pickServiceByCapability (LLM)', {
-          address: TEE_REGISTRY,
-          args: llmArgs.map(String),
+        console.log('[useVetra] calling pickServiceByCapability via rawClient (LLM)', {
+          address: TEE_REGISTRY, args: llmArgs.map(String),
         })
-        const [llmAddr, llmFound] = await publicClient.readContract({
+        const [llmAddr, llmFound] = await rawClient.readContract({
           address: TEE_REGISTRY,
           abi: teeRegistryAbi,
           functionName: 'pickServiceByCapability',
@@ -206,7 +206,7 @@ export function useVetra(): UseVetraReturn {
 
       // Wait for the fulfilled replay — DataFetched event confirms settlement
       setPhase('tx1-settling')
-      await waitForEvent(publicClient, hash1, target, 'DataFetched')
+      await waitForEvent(rawClient, hash1, target, 'DataFetched')
 
       if (abortRef.current) return
 
@@ -226,12 +226,12 @@ export function useVetra(): UseVetraReturn {
       setTxHash2(hash2)
 
       setPhase('tx2-settling')
-      await waitForEvent(publicClient, hash2, target, 'ReputationAnalyzed')
+      await waitForEvent(rawClient, hash2, target, 'ReputationAnalyzed')
 
       if (abortRef.current) return
 
       // 5. Read and decode the cached result
-      const [finalOutput, ,] = await publicClient.readContract({
+      const [finalOutput, ,] = await rawClient.readContract({
         address: VETRA_ADDRESS,
         abi: vetraAbi,
         functionName: 'getResult',
@@ -246,7 +246,7 @@ export function useVetra(): UseVetraReturn {
       setError(msg)
       setPhase('error')
     }
-  }, [publicClient, account])
+  }, [publicClient, account])  // publicClient kept for chain-ID guard only
 
   return { phase, verdict, txHash1, txHash2, error, analyze, reset }
 }
