@@ -2,8 +2,8 @@
 
 import { useState, useCallback, useRef } from 'react'
 import { usePublicClient, useWalletClient, useAccount } from 'wagmi'
-import { createPublicClient, encodeFunctionData, http, isAddress } from 'viem'
-import type { Hex, Address } from 'viem'
+import { createPublicClient, encodeFunctionData, http, isAddress, parseEventLogs } from 'viem'
+import type { Hex, Address, PublicClient } from 'viem'
 import {
   VETRA_ADDRESS,
   vetraAbi,
@@ -273,65 +273,58 @@ const REPUTATION_ANALYZED_EVENT = {
   ],
 } as const
 
-// Waits for the fulfilled-replay TX (a different hash from the commitment TX) to emit
-// the settlement event. The commitment TX is mined first; the fulfilled replay arrives
-// within TTL blocks (~105s at 300 blocks × 350ms). Poll getLogs on a 400ms cadence.
+// Checks receipt logs first (fast path), then polls for the fulfilled-replay TX.
+// The commitment TX receipt has empty logs; the actual event is emitted when the
+// Ritual executor settles the precompile call in a separate fulfilled-replay TX.
 async function waitForEvent(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  publicClient: any,
+  client: PublicClient,
   txHash: Hex,
   target: Address,
   eventName: 'DataFetched' | 'ReputationAnalyzed',
 ): Promise<void> {
-  // Wait for the commitment TX to land, then start polling from that block.
-  const receipt = await publicClient.waitForTransactionReceipt({
+  const receipt = await client.waitForTransactionReceipt({
     hash: txHash,
     confirmations: 1,
     timeout: 60_000,
   })
 
-  const commitBlock: bigint = receipt.blockNumber ?? 0n
+  // Try receipt logs first — covers same-block settlement and future sync paths.
+  const parsed = parseEventLogs({ abi: vetraAbi, logs: receipt.logs, eventName })
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const hit = parsed.find((l: any) => l.args.target?.toLowerCase() === target.toLowerCase())
+  if (hit) return
+
+  // Async precompile: the fulfilled-replay TX arrives in a later block.
+  return pollForEvent(client, receipt.blockNumber, target, eventName)
+}
+
+// Polls eth_getLogs from startBlock to the current head until the event appears.
+// Guard: only query when currentBlock >= startBlock to avoid fromBlock > toBlock errors
+// (different RPC nodes may briefly disagree on head block by a few blocks).
+async function pollForEvent(
+  client: PublicClient,
+  startBlock: bigint,
+  target: Address,
+  eventName: 'DataFetched' | 'ReputationAnalyzed',
+  maxAttempts = 60,
+): Promise<void> {
   const event = eventName === 'DataFetched' ? DATA_FETCHED_EVENT : REPUTATION_ANALYZED_EVENT
 
-  // Poll for up to 130s (TTL 300 blocks × ~350ms + buffer)
-  const deadline = Date.now() + 130_000
-  while (Date.now() < deadline) {
-    const head = await publicClient.getBlockNumber()
-    // Search from the commitment block to catch the fulfilled-replay TX
-    const fromBlock = commitBlock
-
-    const logs = await publicClient.getLogs({
-      address: VETRA_ADDRESS,
-      event,
-      args: { target },
-      fromBlock,
-      toBlock: head,
-    })
-
-    if (logs.length > 0) return
-
-    await sleep(400)
+  for (let i = 0; i < maxAttempts; i++) {
+    const currentBlock = await client.getBlockNumber()
+    if (currentBlock >= startBlock) {
+      const logs = await client.getLogs({
+        address: VETRA_ADDRESS,
+        event,
+        args: { target },
+        fromBlock: startBlock,
+        toBlock: currentBlock,
+      })
+      if (logs.length > 0) return
+    }
+    await sleep(2000)
   }
-
-  // Timed out — the TX may have expired. Check on-chain state directly.
-  if (eventName === 'ReputationAnalyzed') {
-    const exists = await publicClient.readContract({
-      address: VETRA_ADDRESS,
-      abi: vetraAbi,
-      functionName: 'isCached',
-      args: [target],
-    })
-    if (!exists) throw new Error('LLM analysis timed out — check wallet balance in RitualWallet')
-  } else {
-    const [, , fetched] = await publicClient.readContract({
-      address: VETRA_ADDRESS,
-      abi: vetraAbi,
-      functionName: 'addressData',
-      args: [target],
-    })
-    if (!fetched) throw new Error('fetchData timed out — check wallet balance in RitualWallet')
-  }
-
+  throw new Error(`Timeout waiting for ${eventName} — check VetraConsumer's RitualWallet balance`)
 }
 
 function sleep(ms: number) {
