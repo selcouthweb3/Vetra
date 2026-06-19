@@ -50,6 +50,12 @@ export function useVetra(): UseVetraReturn {
   const publicClient  = usePublicClient()
   const { data: walletClient } = useWalletClient()
 
+  // walletClient resolves slightly after account on connect — if analyze() closes
+  // over walletClient from the deps array it captures undefined and falsely errors.
+  // A ref always holds the latest value without making analyze() re-create.
+  const walletClientRef = useRef(walletClient)
+  walletClientRef.current = walletClient
+
   const [phase,   setPhase]   = useState<Phase>('idle')
   const [verdict, setVerdict] = useState<VerdictResult | null>(null)
   const [txHash1, setTxHash1] = useState<Hex | null>(null)
@@ -70,7 +76,14 @@ export function useVetra(): UseVetraReturn {
   }, [])
 
   const analyze = useCallback(async (targetRaw: string) => {
-    if (!publicClient || !walletClient || !account) {
+    const wc = walletClientRef.current
+    console.log('[useVetra] analyze called', {
+      account,
+      walletClient: !!wc,
+      publicClient: !!publicClient,
+    })
+
+    if (!publicClient || !wc || !account) {
       setError('Connect your wallet first')
       setPhase('error')
       return
@@ -141,7 +154,7 @@ export function useVetra(): UseVetraReturn {
         args: [target, executor as Address, TTL],
       })
 
-      const hash1 = await walletClient.sendTransaction({
+      const hash1 = await wc.sendTransaction({
         to: VETRA_ADDRESS,
         data: data1,
         gas: 3_000_000n,
@@ -162,7 +175,7 @@ export function useVetra(): UseVetraReturn {
         args: [target, llmExecutor as Address, TTL],
       })
 
-      const hash2 = await walletClient.sendTransaction({
+      const hash2 = await wc.sendTransaction({
         to: VETRA_ADDRESS,
         data: data2,
         gas: 5_000_000n,
@@ -190,7 +203,7 @@ export function useVetra(): UseVetraReturn {
       setError(msg)
       setPhase('error')
     }
-  }, [publicClient, walletClient, account])
+  }, [publicClient, account])
 
   return { phase, verdict, txHash1, txHash2, error, analyze, reset }
 }
