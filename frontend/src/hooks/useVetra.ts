@@ -125,37 +125,64 @@ export function useVetra(): UseVetraReturn {
       }
       if (cacheHit) return
 
-      // 2. Pick executors — wrap in own try/catch so a transient RPC 0x or
-      //    decode error surfaces as a readable message instead of raw viem output.
+      // 2. Pick executors
       setPhase('fetching-executor')
+
+      // Diagnostic: verify publicClient is on Ritual testnet (chain 1979).
+      // wagmi can hand the hook a client backed by MetaMask's RPC (which may be
+      // Ethereum mainnet or another chain) instead of the http() transport we
+      // configured — if so, every registry read returns 0x.
+      const clientChainId  = publicClient.chain?.id
+      const clientTransport = (publicClient as any).transport
+      console.log('[useVetra] publicClient diagnostics', {
+        chainId:      clientChainId,
+        transportUrl: clientTransport?.url ?? clientTransport?.transports?.map((t: any) => t?.value?.url),
+        registryAddr: TEE_REGISTRY,
+      })
+
+      if (clientChainId !== 1979) {
+        throw new Error(`Wrong network — please switch MetaMask to Ritual Testnet (chain 1979). Currently on chain ${clientChainId}.`)
+      }
+
       let executor: Address
       let llmExecutor: Address
       try {
+        const httpArgs = [0, true, BigInt(Date.now()), 5n] as const
+        console.log('[useVetra] calling pickServiceByCapability (HTTP)', {
+          address: TEE_REGISTRY,
+          args: httpArgs.map(String),
+        })
         const [httpAddr, httpFound] = await publicClient.readContract({
           address: TEE_REGISTRY,
           abi: teeRegistryAbi,
           functionName: 'pickServiceByCapability',
-          args: [0, true, BigInt(Date.now()), 5n],
+          args: httpArgs,
         })
-        console.log('[useVetra] HTTP executor', { httpAddr, httpFound })
+        console.log('[useVetra] HTTP executor result', { httpAddr, httpFound })
         if (!httpFound) throw new Error('no-service')
         executor = httpAddr as Address
 
+        const llmArgs = [1, true, BigInt(Date.now() + 1), 5n] as const
+        console.log('[useVetra] calling pickServiceByCapability (LLM)', {
+          address: TEE_REGISTRY,
+          args: llmArgs.map(String),
+        })
         const [llmAddr, llmFound] = await publicClient.readContract({
           address: TEE_REGISTRY,
           abi: teeRegistryAbi,
           functionName: 'pickServiceByCapability',
-          args: [1, true, BigInt(Date.now() + 1), 5n],
+          args: llmArgs,
         })
-        console.log('[useVetra] LLM executor', { llmAddr, llmFound })
+        console.log('[useVetra] LLM executor result', { llmAddr, llmFound })
         if (!llmFound) throw new Error('no-service')
         llmExecutor = llmAddr as Address
       } catch (registryErr) {
+        console.error('[useVetra] registry error (full object)', registryErr)
         const raw = registryErr instanceof Error ? registryErr.message : String(registryErr)
         if (raw === 'no-service') {
-          throw new Error('No Ritual precompile service is registered for this capability — try again later')
+          throw new Error('No Ritual precompile service registered for this capability — try again later')
         }
-        throw new Error('Ritual precompile service unavailable — try again in a few minutes')
+        throw new Error(`Ritual registry call failed: ${raw}`)
       }
 
       if (abortRef.current) return
