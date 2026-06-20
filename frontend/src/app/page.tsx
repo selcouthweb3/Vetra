@@ -60,7 +60,7 @@ export default function Home() {
       <header className="sticky top-0 z-50 border-b border-zinc-800 bg-zinc-950/80 backdrop-blur-xl">
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-emerald-400 to-emerald-600 flex items-center justify-center font-bold text-zinc-950 text-sm">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-400 to-violet-600 flex items-center justify-center font-bold text-zinc-950 text-sm">
               V
             </div>
             <div>
@@ -73,8 +73,8 @@ export default function Home() {
             {/* Network pill */}
             <div className="hidden sm:flex items-center gap-2 text-xs">
               <div className="relative">
-                <div className="w-2 h-2 rounded-full bg-emerald-400" />
-                <div className="absolute inset-0 w-2 h-2 rounded-full bg-emerald-400 animate-[ping_1.5s_ease-in-out_infinite] opacity-75" />
+                <div className="w-2 h-2 rounded-full bg-violet-400" />
+                <div className="absolute inset-0 w-2 h-2 rounded-full bg-violet-400 animate-[ping_1.5s_ease-in-out_infinite] opacity-75" />
               </div>
               <span className="text-zinc-400">Ritual Testnet</span>
               <span className="text-zinc-700">·</span>
@@ -97,14 +97,14 @@ export default function Home() {
 
       {/* ── Hero ───────────────────────────────────────────────────────── */}
       <section className="max-w-4xl mx-auto px-6 pt-20 pb-14 text-center">
-        <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-emerald-400/20 bg-emerald-400/5 text-emerald-400 text-xs font-medium mb-8">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-[pulse_2s_ease-in-out_infinite]" />
+        <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-violet-400/20 bg-violet-400/5 text-violet-400 text-xs font-medium mb-8">
+          <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-[pulse_2s_ease-in-out_infinite]" />
           Powered by Ritual&apos;s on-chain AI
         </div>
 
         <h1 className="text-4xl md:text-6xl font-bold tracking-tight mb-5 leading-tight">
           Check any wallet&apos;s<br />reputation,{' '}
-          <span className="bg-gradient-to-r from-emerald-400 to-emerald-200 bg-clip-text text-transparent">
+          <span className="bg-gradient-to-r from-violet-400 to-violet-200 bg-clip-text text-transparent">
             on-chain.
           </span>
         </h1>
@@ -130,12 +130,12 @@ export default function Home() {
                   'w-full h-14 bg-zinc-900 border rounded-xl pl-11 pr-4 font-mono text-sm',
                   'placeholder:text-zinc-600 text-zinc-100',
                   'transition-all duration-200 outline-none',
-                  'focus:ring-2 focus:ring-emerald-400/20',
+                  'focus:ring-2 focus:ring-violet-400/20',
                   'disabled:opacity-50 disabled:cursor-not-allowed',
                   input && !isValidAddress
                     ? 'border-rose-400/50 focus:border-rose-400/70'
                     : isValidAddress
-                      ? 'border-emerald-400/40 focus:border-emerald-400/60'
+                      ? 'border-violet-400/40 focus:border-violet-400/60'
                       : 'border-zinc-800 focus:border-zinc-700',
                 ].join(' ')}
               />
@@ -149,7 +149,7 @@ export default function Home() {
             ) : (
               <button type="submit"
                 disabled={!isValidAddress || busy || !isConnected || wrongNetwork}
-                className="h-14 px-8 rounded-xl bg-emerald-400 hover:bg-emerald-300 text-zinc-950 text-sm font-semibold transition-all duration-200 whitespace-nowrap disabled:bg-zinc-800 disabled:text-zinc-600 disabled:cursor-not-allowed">
+                className="h-14 px-8 rounded-xl bg-violet-400 hover:bg-violet-300 text-zinc-950 text-sm font-semibold transition-all duration-200 whitespace-nowrap disabled:bg-zinc-800 disabled:text-zinc-600 disabled:cursor-not-allowed">
                 {busy ? 'Analyzing…' : 'Analyze'}
               </button>
             )}
@@ -197,7 +197,7 @@ export default function Home() {
       {phase === 'idle' && (
         <section className="max-w-7xl mx-auto px-6 py-16 border-t border-zinc-800/60">
           <div className="text-center mb-12">
-            <div className="text-xs font-medium tracking-widest text-emerald-400 mb-3">HOW IT WORKS</div>
+            <div className="text-xs font-medium tracking-widest text-violet-400 mb-3">HOW IT WORKS</div>
             <h2 className="text-3xl font-bold tracking-tight">
               Three on-chain steps. Zero infrastructure.
             </h2>

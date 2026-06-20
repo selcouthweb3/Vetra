@@ -102,8 +102,8 @@ export function PhaseStepper({ phase, txHash1, txHash2 }: Props) {
               <div className="flex flex-col items-center gap-1.5 shrink-0">
                 <div className={[
                   'w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-all duration-300',
-                  state === 'done'     ? 'bg-emerald-400 text-zinc-950' :
-                  state === 'active'   ? 'bg-emerald-400/20 border-2 border-emerald-400 text-emerald-400 ring-4 ring-emerald-400/10' :
+                  state === 'done'     ? 'bg-violet-400 text-zinc-950' :
+                  state === 'active'   ? 'bg-violet-400/20 border-2 border-violet-400 text-violet-400 ring-4 ring-violet-400/10' :
                   state === 'settling' ? 'bg-amber-400/20 border-2 border-amber-400 text-amber-400 ring-4 ring-amber-400/10' :
                                          'bg-zinc-800 border-2 border-zinc-700 text-zinc-600',
                 ].join(' ')}>
@@ -112,15 +112,15 @@ export function PhaseStepper({ phase, txHash1, txHash2 }: Props) {
                       <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                     </svg>
                   ) : state === 'active' || state === 'settling' ? (
-                    <div className={`w-2 h-2 rounded-full ${state === 'settling' ? 'bg-amber-400' : 'bg-emerald-400'} animate-pulse`} />
+                    <div className={`w-2 h-2 rounded-full ${state === 'settling' ? 'bg-amber-400' : 'bg-violet-400'} animate-pulse`} />
                   ) : (
                     <span>{i + 1}</span>
                   )}
                 </div>
                 <div className="text-center">
                   <div className={`text-xs font-medium whitespace-nowrap ${
-                    state === 'done' ? 'text-emerald-400' :
-                    state === 'active' ? 'text-emerald-400' :
+                    state === 'done' ? 'text-violet-400' :
+                    state === 'active' ? 'text-violet-400' :
                     state === 'settling' ? 'text-amber-400' :
                     'text-zinc-600'
                   }`}>
@@ -132,7 +132,7 @@ export function PhaseStepper({ phase, txHash1, txHash2 }: Props) {
               {i < STEPS.length - 1 && (
                 <div className={`flex-1 h-px mx-2 mt-[-14px] transition-colors duration-300 ${
                   stepState(STEPS[i + 1]) !== 'pending' || state === 'done'
-                    ? 'bg-emerald-400/40'
+                    ? 'bg-violet-400/40'
                     : 'bg-zinc-700'
                 }`} />
               )}
@@ -143,7 +143,7 @@ export function PhaseStepper({ phase, txHash1, txHash2 }: Props) {
 
       {/* Current status */}
       <div className="flex items-center gap-2.5 text-sm text-zinc-400">
-        <div className="w-3.5 h-3.5 rounded-full border-2 border-zinc-600 border-t-emerald-400 animate-[spin_0.8s_linear_infinite] shrink-0" />
+        <div className="w-3.5 h-3.5 rounded-full border-2 border-zinc-600 border-t-violet-400 animate-[spin_0.8s_linear_infinite] shrink-0" />
         {statusLabel[phase]}
       </div>
 

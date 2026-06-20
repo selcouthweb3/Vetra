@@ -40,7 +40,7 @@ export function WalletBar() {
     return (
       <button
         onClick={handleConnect}
-        className="inline-flex items-center gap-2 h-9 px-4 rounded-lg bg-emerald-400 hover:bg-emerald-300 text-zinc-950 text-sm font-semibold transition-all duration-200"
+        className="inline-flex items-center gap-2 h-9 px-4 rounded-lg bg-violet-400 hover:bg-violet-300 text-zinc-950 text-sm font-semibold transition-all duration-200"
       >
         <Wallet className="w-3.5 h-3.5" />
         Connect Wallet
