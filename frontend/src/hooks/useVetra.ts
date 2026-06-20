@@ -200,7 +200,7 @@ export function useVetra(): UseVetraReturn {
       const hash1 = await wc.sendTransaction({
         to: VETRA_ADDRESS,
         data: data1,
-        gas: 3_000_000n,
+        gas: 800_000n,
       })
       setTxHash1(hash1)
 
@@ -221,7 +221,7 @@ export function useVetra(): UseVetraReturn {
       const hash2 = await wc.sendTransaction({
         to: VETRA_ADDRESS,
         data: data2,
-        gas: 5_000_000n,
+        gas: 1_500_000n,
       })
       setTxHash2(hash2)
 
