@@ -154,8 +154,12 @@ export function VerdictCard({ verdict, cachedAddress, txHash1, txHash2 }: Props)
           </div>
         )}
 
-        <div className="mt-2 text-xs text-zinc-600">
-          Scored on-chain via Ritual LLM precompile · Not financial advice
+        <div className="mt-4 pt-4 border-t border-zinc-800/60">
+          <div className="text-xs font-medium text-zinc-500 mb-1.5">How accurate is this?</div>
+          <p className="text-xs text-zinc-600 leading-relaxed">
+            Vetra uses an LLM running in a TEE to analyze public on-chain data. Results are
+            heuristic, not definitive. Always do your own research.
+          </p>
         </div>
       </div>
     </div>

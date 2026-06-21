@@ -80,12 +80,12 @@ export function PhaseStepper({ phase, txHash1, txHash2 }: Props) {
 
   const statusLabel: Record<Phase, string> = {
     idle:                '',
-    'checking-cache':    'Checking on-chain cache…',
-    'fetching-executor': 'Selecting TEE executor…',
-    'tx1-pending':       'Submitting TX1 — data fetch…',
-    'tx1-settling':      'Waiting for HTTP precompile to settle…',
-    'tx2-pending':       'Submitting TX2 — LLM analysis…',
-    'tx2-settling':      'Waiting for LLM precompile to settle…',
+    'checking-cache':    'Checking for cached results…',
+    'fetching-executor': 'Finding TEE executor…',
+    'tx1-pending':       'Submitting transaction…',
+    'tx1-settling':      'Waiting for executor to process request…',
+    'tx2-pending':       'Submitting AI analysis…',
+    'tx2-settling':      'Running AI reputation scoring…',
     done:                '',
     error:               '',
   }

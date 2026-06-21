@@ -81,11 +81,6 @@ export function useVetra(): UseVetraReturn {
 
   const analyze = useCallback(async (targetRaw: string) => {
     const wc = walletClientRef.current
-    console.log('[useVetra] analyze called', {
-      account,
-      walletClient: !!wc,
-      publicClient: !!publicClient,
-    })
 
     if (!publicClient || !wc || !account) {
       setError('Connect your wallet first')
@@ -118,29 +113,18 @@ export function useVetra(): UseVetraReturn {
           functionName: 'getResult',
           args: [target],
         })
-        console.log('[useVetra] cache check', { exists, rawOutputLen: (rawOutput as Hex).length })
         if (exists && (rawOutput as Hex).length > 2) {
           setVerdict(decodeLLMOutput(rawOutput as Hex))
           setPhase('done')
           cacheHit = true
         }
-      } catch (cacheErr) {
-        console.log('[useVetra] cache miss (decode error, proceeding to TX flow)', cacheErr)
+      } catch {
+        // cache miss — fall through to TX flow
       }
       if (cacheHit) return
 
       // 2. Pick executors
       setPhase('fetching-executor')
-
-      // Diagnostic: compare wagmi publicClient vs rawClient transports.
-      const wagmiTransport = (publicClient as any).transport
-      const rawTransport   = (rawClient as any).transport
-      console.log('[useVetra] client transports', {
-        wagmiChainId:   publicClient.chain?.id,
-        wagmiUrl:       wagmiTransport?.url ?? wagmiTransport?.transports?.map((t: any) => t?.value?.url),
-        rawClientUrl:   rawTransport?.url,
-        rawClientChain: rawClient.chain?.id,
-      })
 
       if (publicClient.chain?.id !== 1979) {
         throw new Error(`Wrong network — please switch MetaMask to Ritual Testnet (chain 1979). Currently on chain ${publicClient.chain?.id}.`)
@@ -150,30 +134,22 @@ export function useVetra(): UseVetraReturn {
       let llmExecutor: Address
       try {
         const httpArgs = [0, true, BigInt(Date.now()), 5n] as const
-        console.log('[useVetra] calling pickServiceByCapability via rawClient (HTTP)', {
-          address: TEE_REGISTRY, args: httpArgs.map(String),
-        })
         const [httpAddr, httpFound] = await rawClient.readContract({
           address: TEE_REGISTRY,
           abi: teeRegistryAbi,
           functionName: 'pickServiceByCapability',
           args: httpArgs,
         })
-        console.log('[useVetra] HTTP executor result', { httpAddr, httpFound })
         if (!httpFound) throw new Error('no-service')
         executor = httpAddr as Address
 
         const llmArgs = [1, true, BigInt(Date.now() + 1), 5n] as const
-        console.log('[useVetra] calling pickServiceByCapability via rawClient (LLM)', {
-          address: TEE_REGISTRY, args: llmArgs.map(String),
-        })
         const [llmAddr, llmFound] = await rawClient.readContract({
           address: TEE_REGISTRY,
           abi: teeRegistryAbi,
           functionName: 'pickServiceByCapability',
           args: llmArgs,
         })
-        console.log('[useVetra] LLM executor result', { llmAddr, llmFound })
         if (!llmFound) throw new Error('no-service')
         llmExecutor = llmAddr as Address
       } catch (registryErr) {
@@ -185,35 +161,18 @@ export function useVetra(): UseVetraReturn {
         throw new Error(`Ritual registry call failed: ${raw}`)
       }
 
-      console.log('[useVetra] registry done', { executor, llmExecutor })
-
-      console.log('[useVetra] abortRef before TX1', abortRef.current)
       if (abortRef.current) return
-
-      console.log('[useVetra] walletClient state', {
-        wc: !!wc,
-        account: wc?.account?.address,
-        chain: wc?.chain?.id,
-      })
 
       // 3. TX1: fetchData — HTTP precompile (short-running async)
       // Must use sendTransaction + encodeFunctionData, NOT writeContractAsync,
       // because writeContractAsync breaks on async precompile fulfilled replay.
-      console.log('[useVetra] setting phase tx1-pending')
       setPhase('tx1-pending')
-      console.log('[useVetra] encoding fetchData call', { target, executor, ttl: String(TTL) })
       const data1 = encodeFunctionData({
         abi: vetraAbi,
         functionName: 'fetchData',
         args: [target, executor as Address, TTL],
       })
-      console.log('[useVetra] data1 length', data1.length)
 
-      console.log('[useVetra] about to send TX1', {
-        to: VETRA_ADDRESS,
-        gas: '800000',
-        dataPrefix: data1.slice(0, 20),
-      })
       let hash1: Hex
       try {
         hash1 = await wc.sendTransaction({
@@ -221,7 +180,6 @@ export function useVetra(): UseVetraReturn {
           data: data1,
           gas: 800_000n,
         })
-        console.log('[useVetra] TX1 submitted', hash1)
       } catch (txErr) {
         console.error('[useVetra] TX1 sendTransaction failed', txErr)
         throw txErr
