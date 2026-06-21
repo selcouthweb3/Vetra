@@ -185,23 +185,47 @@ export function useVetra(): UseVetraReturn {
         throw new Error(`Ritual registry call failed: ${raw}`)
       }
 
+      console.log('[useVetra] registry done', { executor, llmExecutor })
+
+      console.log('[useVetra] abortRef before TX1', abortRef.current)
       if (abortRef.current) return
+
+      console.log('[useVetra] walletClient state', {
+        wc: !!wc,
+        account: wc?.account?.address,
+        chain: wc?.chain?.id,
+      })
 
       // 3. TX1: fetchData — HTTP precompile (short-running async)
       // Must use sendTransaction + encodeFunctionData, NOT writeContractAsync,
       // because writeContractAsync breaks on async precompile fulfilled replay.
+      console.log('[useVetra] setting phase tx1-pending')
       setPhase('tx1-pending')
+      console.log('[useVetra] encoding fetchData call', { target, executor, ttl: String(TTL) })
       const data1 = encodeFunctionData({
         abi: vetraAbi,
         functionName: 'fetchData',
         args: [target, executor as Address, TTL],
       })
+      console.log('[useVetra] data1 length', data1.length)
 
-      const hash1 = await wc.sendTransaction({
+      console.log('[useVetra] about to send TX1', {
         to: VETRA_ADDRESS,
-        data: data1,
-        gas: 800_000n,
+        gas: '800000',
+        dataPrefix: data1.slice(0, 20),
       })
+      let hash1: Hex
+      try {
+        hash1 = await wc.sendTransaction({
+          to: VETRA_ADDRESS,
+          data: data1,
+          gas: 800_000n,
+        })
+        console.log('[useVetra] TX1 submitted', hash1)
+      } catch (txErr) {
+        console.error('[useVetra] TX1 sendTransaction failed', txErr)
+        throw txErr
+      }
       setTxHash1(hash1)
 
       // Wait for the fulfilled replay — DataFetched event confirms settlement

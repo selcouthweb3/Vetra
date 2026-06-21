@@ -9,7 +9,7 @@ contract VetraConsumer {
 
     // ── Constants ─────────────────────────────────────────────────────────────
     // Public JSON-RPC endpoint — no API key required
-    string constant ETH_RPC   = "https://eth.llamarpc.com";
+    string constant ETH_RPC   = "https://rpc.ankr.com/eth";
     string constant LLM_MODEL = "zai-org/GLM-4.7-FP8";
 
     // ── Storage types ─────────────────────────────────────────────────────────
