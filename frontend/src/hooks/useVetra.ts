@@ -14,7 +14,7 @@ import {
   type VerdictResult,
 } from '@/lib/ritual'
 
-// Account-free public client used for all read-only calls.
+// Account-free public client for all read-only calls.
 // wagmi's usePublicClient may include the connected account in eth_call 'from'
 // fields, which causes some Ritual RPC nodes to return 0x for view calls.
 const rawClient = createPublicClient({
@@ -28,35 +28,34 @@ export type Phase =
   | 'idle'
   | 'checking-cache'
   | 'fetching-executor'
-  | 'tx1-pending'       // fetchData TX submitted
-  | 'tx1-settling'      // waiting for DataFetched event (fulfilled replay)
-  | 'tx2-pending'       // analyzeReputation TX submitted
-  | 'tx2-settling'      // waiting for ReputationAnalyzed event
+  | 'tx1-pending'
+  | 'tx1-settling'
+  | 'tx2-pending'
+  | 'tx2-settling'
   | 'done'
   | 'error'
 
 export interface UseVetraReturn {
-  phase: Phase
+  phase:   Phase
   verdict: VerdictResult | null
   txHash1: Hex | null
   txHash2: Hex | null
-  error: string | null
+  error:   string | null
   analyze: (target: string) => Promise<void>
-  reset: () => void
+  reset:   () => void
 }
 
-const TTL = 300n  // blocks — safe for HTTP + LLM on Ritual testnet
+const TTL = 300n
 
 // ── Hook ─────────────────────────────────────────────────────────────────────
 
 export function useVetra(): UseVetraReturn {
   const { address: account } = useAccount()
-  const publicClient  = usePublicClient()
+  const publicClient = usePublicClient()
   const { data: walletClient } = useWalletClient()
 
-  // walletClient resolves slightly after account on connect — if analyze() closes
-  // over walletClient from the deps array it captures undefined and falsely errors.
-  // A ref always holds the latest value without making analyze() re-create.
+  // walletClient resolves slightly after account on connect — a ref always holds
+  // the latest value without causing analyze() to re-create on each connect tick.
   const walletClientRef = useRef(walletClient)
   walletClientRef.current = walletClient
 
@@ -66,6 +65,10 @@ export function useVetra(): UseVetraReturn {
   const [txHash2, setTxHash2] = useState<Hex | null>(null)
   const [error,   setError]   = useState<string | null>(null)
 
+  // abortRef cancels any in-flight analyze() when reset() is called.
+  // It is set back to false only at the START of a new analyze() call —
+  // no setTimeout, which previously caused a race where RPC responses
+  // arriving in the 50ms window would silently abort the new run.
   const abortRef = useRef(false)
 
   const reset = useCallback(() => {
@@ -75,8 +78,6 @@ export function useVetra(): UseVetraReturn {
     setTxHash1(null)
     setTxHash2(null)
     setError(null)
-    // Allow future runs
-    setTimeout(() => { abortRef.current = false }, 50)
   }, [])
 
   const analyze = useCallback(async (targetRaw: string) => {
@@ -95,6 +96,7 @@ export function useVetra(): UseVetraReturn {
     }
     const target = targetRaw as Address
 
+    // Clear abort flag for this new run before any await
     abortRef.current = false
     setPhase('checking-cache')
     setVerdict(null)
@@ -103,18 +105,29 @@ export function useVetra(): UseVetraReturn {
     setError(null)
 
     try {
-      // 1. Check cache — getResult returns 0x (undecodable) when not cached,
-      //    so treat any decode error as a cache miss and fall through to the TX flow.
+      // 1. Check cache
       let cacheHit = false
       try {
-        const [rawOutput, , exists] = await rawClient.readContract({
+        const [rawOutput, , cachedAtTime, requestedBy, exists] = await rawClient.readContract({
           address: VETRA_ADDRESS,
           abi: vetraAbi,
           functionName: 'getResult',
           args: [target],
         })
         if (exists && (rawOutput as Hex).length > 2) {
-          setVerdict(decodeLLMOutput(rawOutput as Hex))
+          const [balHex, txHex] = await rawClient.readContract({
+            address: VETRA_ADDRESS,
+            abi: vetraAbi,
+            functionName: 'addressData',
+            args: [target],
+          })
+          setVerdict({
+            ...decodeLLMOutput(rawOutput as Hex),
+            requestedBy:      requestedBy as Address,
+            cachedAtTimestamp: Number(cachedAtTime as bigint),
+            balanceHex:        balHex as string,
+            txCountHex:        txHex as string,
+          })
           setPhase('done')
           cacheHit = true
         }
@@ -127,33 +140,32 @@ export function useVetra(): UseVetraReturn {
       setPhase('fetching-executor')
 
       if (publicClient.chain?.id !== 1979) {
-        throw new Error(`Wrong network — please switch MetaMask to Ritual Testnet (chain 1979). Currently on chain ${publicClient.chain?.id}.`)
+        throw new Error(
+          `Wrong network — please switch MetaMask to Ritual Testnet (chain 1979). Currently on chain ${publicClient.chain?.id}.`
+        )
       }
 
       let executor: Address
       let llmExecutor: Address
       try {
-        const httpArgs = [0, true, BigInt(Date.now()), 5n] as const
         const [httpAddr, httpFound] = await rawClient.readContract({
           address: TEE_REGISTRY,
           abi: teeRegistryAbi,
           functionName: 'pickServiceByCapability',
-          args: httpArgs,
+          args: [0, true, BigInt(Date.now()), 5n] as const,
         })
         if (!httpFound) throw new Error('no-service')
         executor = httpAddr as Address
 
-        const llmArgs = [1, true, BigInt(Date.now() + 1), 5n] as const
         const [llmAddr, llmFound] = await rawClient.readContract({
           address: TEE_REGISTRY,
           abi: teeRegistryAbi,
           functionName: 'pickServiceByCapability',
-          args: llmArgs,
+          args: [1, true, BigInt(Date.now() + 1), 5n] as const,
         })
         if (!llmFound) throw new Error('no-service')
         llmExecutor = llmAddr as Address
       } catch (registryErr) {
-        console.error('[useVetra] registry error (full object)', registryErr)
         const raw = registryErr instanceof Error ? registryErr.message : String(registryErr)
         if (raw === 'no-service') {
           throw new Error('No Ritual precompile service registered for this capability — try again later')
@@ -163,9 +175,9 @@ export function useVetra(): UseVetraReturn {
 
       if (abortRef.current) return
 
-      // 3. TX1: fetchData — HTTP precompile (short-running async)
-      // Must use sendTransaction + encodeFunctionData, NOT writeContractAsync,
-      // because writeContractAsync breaks on async precompile fulfilled replay.
+      // 3. TX1: fetchData — HTTP precompile
+      // Must use sendTransaction + encodeFunctionData (NOT writeContractAsync)
+      // because async precompile fulfilled replay breaks with writeContractAsync.
       setPhase('tx1-pending')
       const data1 = encodeFunctionData({
         abi: vetraAbi,
@@ -186,13 +198,12 @@ export function useVetra(): UseVetraReturn {
       }
       setTxHash1(hash1)
 
-      // Wait for the fulfilled replay — DataFetched event confirms settlement
       setPhase('tx1-settling')
       await waitForEvent(rawClient, hash1, target, 'DataFetched')
 
       if (abortRef.current) return
 
-      // 4. TX2: analyzeReputation — LLM precompile (short-running async)
+      // 4. TX2: analyzeReputation — LLM precompile
       setPhase('tx2-pending')
       const data2 = encodeFunctionData({
         abi: vetraAbi,
@@ -212,15 +223,29 @@ export function useVetra(): UseVetraReturn {
 
       if (abortRef.current) return
 
-      // 5. Read and decode the cached result
-      const [finalOutput, ,] = await rawClient.readContract({
-        address: VETRA_ADDRESS,
-        abi: vetraAbi,
-        functionName: 'getResult',
-        args: [target],
-      })
+      // 5. Read result + address data in parallel
+      const [[finalOutput, , cachedAtTime, requestedBy], [balHex, txHex]] = await Promise.all([
+        rawClient.readContract({
+          address: VETRA_ADDRESS,
+          abi: vetraAbi,
+          functionName: 'getResult',
+          args: [target],
+        }),
+        rawClient.readContract({
+          address: VETRA_ADDRESS,
+          abi: vetraAbi,
+          functionName: 'addressData',
+          args: [target],
+        }),
+      ])
 
-      setVerdict(decodeLLMOutput(finalOutput as Hex))
+      setVerdict({
+        ...decodeLLMOutput(finalOutput as Hex),
+        requestedBy:      requestedBy as Address,
+        cachedAtTimestamp: Number(cachedAtTime as bigint),
+        balanceHex:        balHex as string,
+        txCountHex:        txHex as string,
+      })
       setPhase('done')
     } catch (e: unknown) {
       if (abortRef.current) return
@@ -228,14 +253,13 @@ export function useVetra(): UseVetraReturn {
       setError(msg)
       setPhase('error')
     }
-  }, [publicClient, account])  // publicClient kept for chain-ID guard only
+  }, [publicClient, account])
 
   return { phase, verdict, txHash1, txHash2, error, analyze, reset }
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-// Full ABI event objects — viem needs all inputs to compute the correct topic0 hash.
 const DATA_FETCHED_EVENT = {
   type:   'event',
   name:   'DataFetched',
@@ -252,12 +276,13 @@ const REPUTATION_ANALYZED_EVENT = {
   inputs: [
     { name: 'target',      type: 'address', indexed: true  },
     { name: 'blockNumber', type: 'uint256', indexed: false },
+    { name: 'requestedBy', type: 'address', indexed: true  },
   ],
 } as const
 
 // Checks receipt logs first (fast path), then polls for the fulfilled-replay TX.
-// The commitment TX receipt has empty logs; the actual event is emitted when the
-// Ritual executor settles the precompile call in a separate fulfilled-replay TX.
+// The commitment TX receipt has empty logs; the event fires when the Ritual executor
+// settles the precompile call in a separate fulfilled-replay TX.
 async function waitForEvent(
   client: PublicClient,
   txHash: Hex,
@@ -270,19 +295,15 @@ async function waitForEvent(
     timeout: 60_000,
   })
 
-  // Try receipt logs first — covers same-block settlement and future sync paths.
   const parsed = parseEventLogs({ abi: vetraAbi, logs: receipt.logs, eventName })
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const hit = parsed.find((l: any) => l.args.target?.toLowerCase() === target.toLowerCase())
   if (hit) return
 
-  // Async precompile: the fulfilled-replay TX arrives in a later block.
   return pollForEvent(client, receipt.blockNumber, target, eventName)
 }
 
-// Polls eth_getLogs from startBlock to the current head until the event appears.
-// Guard: only query when currentBlock >= startBlock to avoid fromBlock > toBlock errors
-// (different RPC nodes may briefly disagree on head block by a few blocks).
+// Polls eth_getLogs from startBlock to current head until the event appears.
 async function pollForEvent(
   client: PublicClient,
   startBlock: bigint,
@@ -304,11 +325,7 @@ async function pollForEvent(
       })
       if (logs.length > 0) return
     }
-    await sleep(2000)
+    await new Promise(resolve => setTimeout(resolve, 2000))
   }
   throw new Error(`Timeout waiting for ${eventName} — check VetraConsumer's RitualWallet balance`)
-}
-
-function sleep(ms: number) {
-  return new Promise(resolve => setTimeout(resolve, ms))
 }

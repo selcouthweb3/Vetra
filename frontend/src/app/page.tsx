@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useAccount } from 'wagmi'
-import { isAddress } from 'viem'
+import { isAddress, createPublicClient, http } from 'viem'
 import { Globe, Cpu, Database, Search, AlertCircle, Clock, Wallet } from 'lucide-react'
 import { toast } from 'sonner'
 import dynamic from 'next/dynamic'
@@ -13,14 +13,14 @@ import { FeatureCard } from '@/components/FeatureCard'
 import { PhaseStepper } from '@/components/PhaseStepper'
 import { VerdictCard }  from '@/components/VerdictCard'
 import { ErrorBanner }  from '@/components/ErrorBanner'
+import { VETRA_ADDRESS, vetraAbi, ritualChain } from '@/lib/ritual'
 
 const WalletBar = dynamic(
   () => import('@/components/WalletBar').then(m => ({ default: m.WalletBar })),
   { ssr: false },
 )
 
-const VETRA_CONTRACT = '0x458Ee9DeF261013fc7cF8bE3baC3e1E71669DE69'
-const EXPLORER_ADDR  = 'https://explorer.ritualfoundation.org/address'
+const EXPLORER_ADDR = 'https://explorer.ritualfoundation.org/address'
 
 const EXAMPLES = [
   { label: 'Vitalik',  address: '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045' },
@@ -28,20 +28,37 @@ const EXAMPLES = [
   { label: 'Scammer',  address: '0x098B716B8Aaf21512996dC57EB0615e2383E2f96' },
 ] as const
 
+// Standalone client for stats reads (no wallet connection required)
+const statsClient = createPublicClient({
+  chain: ritualChain,
+  transport: http('https://rpc.ritualfoundation.org'),
+})
+
 export default function Home() {
   const { isConnected, chainId } = useAccount()
-  const [input, setInput]        = useState('')
+  const [input, setInput] = useState('')
   const { phase, verdict, txHash1, txHash2, error, analyze, reset } = useVetra()
 
-  const isValidAddress = isAddress(input.trim())
-  const busy        = !['idle', 'done', 'error'].includes(phase)
-  const wrongNetwork = isConnected && chainId !== 1979
-  const isTimeout   = !!error && error.includes('Timeout waiting for')
+  const [totalAnalyzed, setTotalAnalyzed] = useState<string>('—')
 
   useEffect(() => {
-    if (phase === 'tx1-pending') toast.info('Fetching on-chain data…', { id: 'tx1' })
+    if (VETRA_ADDRESS === '0x0') return
+    statsClient.readContract({
+      address: VETRA_ADDRESS,
+      abi: vetraAbi,
+      functionName: 'totalAnalyzed',
+    }).then(n => setTotalAnalyzed(String(n))).catch(() => {})
+  }, [])
+
+  const isValidAddress = isAddress(input.trim())
+  const busy         = !['idle', 'done', 'error'].includes(phase)
+  const wrongNetwork = isConnected && chainId !== 1979
+  const isTimeout    = !!error && error.includes('Timeout waiting for')
+
+  useEffect(() => {
+    if (phase === 'tx1-pending')  toast.info('Fetching on-chain data…', { id: 'tx1' })
     if (phase === 'tx1-settling') toast.dismiss('tx1')
-    if (phase === 'tx2-pending') toast.info('Running AI analysis…', { id: 'tx2' })
+    if (phase === 'tx2-pending')  toast.info('Running AI analysis…', { id: 'tx2' })
     if (phase === 'tx2-settling') toast.dismiss('tx2')
     if (phase === 'done')  toast.success('Analysis complete', { id: 'done' })
     if (phase === 'error' && error && !isTimeout) toast.error(error, { id: 'err', duration: 6000 })
@@ -61,6 +78,7 @@ export default function Home() {
   function handleRetry() {
     const addr = input.trim()
     reset()
+    // analyze() immediately sets abortRef=false — safe to call right after reset()
     analyze(addr)
   }
 
@@ -81,7 +99,7 @@ export default function Home() {
             </div>
             <div>
               <div className="font-semibold tracking-tight leading-none">Vetra</div>
-              <div className="text-[10px] text-zinc-500 mt-0.5">Address Reputation</div>
+              <div className="text-[10px] text-zinc-500 mt-0.5">Address Reputation · V2</div>
             </div>
           </div>
 
@@ -130,7 +148,12 @@ export default function Home() {
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-600 pointer-events-none" />
               <input
                 value={input}
-                onChange={e => { setInput(e.target.value); if (phase !== 'idle') reset() }}
+                onChange={e => {
+                  setInput(e.target.value)
+                  // Only abort an in-flight run; do not call reset() when idle
+                  // to avoid triggering the abortRef while no analysis is running.
+                  if (!['idle', 'done', 'error'].includes(phase)) reset()
+                }}
                 placeholder="0x… Ethereum address"
                 disabled={busy}
                 spellCheck={false}
@@ -198,10 +221,10 @@ export default function Home() {
       {/* ── Stats bar ──────────────────────────────────────────────────── */}
       <section className="max-w-7xl mx-auto px-6 pb-12">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <StatCard label="ADDRESSES ANALYZED" value="47"  sub="all time" />
-          <StatCard label="AVG RISK SCORE"      value="31"  sub="0 = safe, 100 = risk" />
-          <StatCard label="CACHE HIT RATE"      value="23%" sub="instant results" />
-          <StatCard label="ACTIVE TEES"         value="2"   sub="Ritual testnet" />
+          <StatCard label="ADDRESSES SCANNED" value={totalAnalyzed} sub="on Ritual Testnet" />
+          <StatCard label="ON-CHAIN CACHE"     value="∞"            sub="no expiry by default" />
+          <StatCard label="NETWORK"            value="Ritual"       sub="Chain 1979 — Testnet" />
+          <StatCard label="AI MODEL"           value="GLM-4.7"      sub="FP8 in TEE executor" />
         </div>
       </section>
 
@@ -301,7 +324,6 @@ export default function Home() {
         <div className="max-w-7xl mx-auto px-6 py-8">
           <div className="flex flex-col md:flex-row items-center justify-between gap-6">
 
-            {/* Left: logo + tagline */}
             <div className="flex items-center gap-2.5">
               <div className="w-6 h-6 rounded-md bg-gradient-to-br from-violet-400 to-violet-600 flex items-center justify-center font-bold text-zinc-950 text-[10px]">
                 V
@@ -311,20 +333,18 @@ export default function Home() {
               <span className="text-xs text-zinc-500">Built on Ritual</span>
             </div>
 
-            {/* Center: disclaimer */}
             <p className="text-xs text-zinc-600 text-center max-w-sm">
               Demo on Ritual Testnet. Verdicts are AI-generated and not financial advice.
             </p>
 
-            {/* Right: links */}
             <div className="flex items-center gap-5 text-xs text-zinc-500">
               <a href="https://github.com/selcouthweb3/Vetra" target="_blank" rel="noopener noreferrer"
                 className="hover:text-zinc-300 transition-colors duration-150">GitHub</a>
               <a href="#" className="hover:text-zinc-300 transition-colors duration-150">Twitter</a>
               <a href="#" className="hover:text-zinc-300 transition-colors duration-150">Discord</a>
-              <a href={`${EXPLORER_ADDR}/${VETRA_CONTRACT}`} target="_blank" rel="noopener noreferrer"
+              <a href={`${EXPLORER_ADDR}/${VETRA_ADDRESS}`} target="_blank" rel="noopener noreferrer"
                 className="font-mono hover:text-zinc-300 transition-colors duration-150">
-                {VETRA_CONTRACT.slice(0, 6)}…{VETRA_CONTRACT.slice(-4)}
+                {VETRA_ADDRESS.slice(0, 6)}…{VETRA_ADDRESS.slice(-4)}
               </a>
             </div>
           </div>

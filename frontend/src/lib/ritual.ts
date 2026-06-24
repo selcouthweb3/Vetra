@@ -1,5 +1,5 @@
 import { defineChain, decodeAbiParameters, parseAbiParameters } from 'viem'
-import type { Hex } from 'viem'
+import type { Hex, Address } from 'viem'
 
 // ── Chain ────────────────────────────────────────────────────────────────────
 
@@ -21,7 +21,6 @@ export const ritualChain = defineChain({
 
 // ── Contract ─────────────────────────────────────────────────────────────────
 
-// Populated after deployment — see .env.local
 export const VETRA_ADDRESS = (process.env.NEXT_PUBLIC_VETRA_ADDRESS ?? '0x0') as Hex
 
 export const vetraAbi = [
@@ -38,9 +37,11 @@ export const vetraAbi = [
     stateMutability: 'view',
     inputs: [{ name: 'target', type: 'address' }],
     outputs: [
-      { name: 'rawOutput', type: 'bytes' },
-      { name: 'cachedAt',  type: 'uint256' },
-      { name: 'exists',    type: 'bool' },
+      { name: 'rawOutput',    type: 'bytes'   },
+      { name: 'cachedAt',     type: 'uint256' },
+      { name: 'cachedAtTime', type: 'uint256' },
+      { name: 'requestedBy',  type: 'address' },
+      { name: 'exists',       type: 'bool'    },
     ],
   },
   {
@@ -51,8 +52,15 @@ export const vetraAbi = [
     outputs: [
       { name: 'balanceHex', type: 'string' },
       { name: 'txCountHex', type: 'string' },
-      { name: 'fetched',    type: 'bool' },
+      { name: 'fetched',    type: 'bool'   },
     ],
+  },
+  {
+    name: 'totalAnalyzed',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'uint256' }],
   },
   {
     name: 'fetchData',
@@ -80,7 +88,7 @@ export const vetraAbi = [
     name: 'DataFetched',
     type: 'event',
     inputs: [
-      { name: 'target',     type: 'address', indexed: true },
+      { name: 'target',     type: 'address', indexed: true  },
       { name: 'balanceHex', type: 'string',  indexed: false },
       { name: 'txCountHex', type: 'string',  indexed: false },
     ],
@@ -89,8 +97,9 @@ export const vetraAbi = [
     name: 'ReputationAnalyzed',
     type: 'event',
     inputs: [
-      { name: 'target',      type: 'address', indexed: true },
+      { name: 'target',      type: 'address', indexed: true  },
       { name: 'blockNumber', type: 'uint256', indexed: false },
+      { name: 'requestedBy', type: 'address', indexed: true  },
     ],
   },
 ] as const
@@ -130,10 +139,10 @@ export const teeRegistryAbi = [
     type: 'function',
     stateMutability: 'view',
     inputs: [
-      { name: 'capability',   type: 'uint8'   },
-      { name: 'checkValidity', type: 'bool'   },
-      { name: 'seed',         type: 'uint256' },
-      { name: 'maxProbes',    type: 'uint256' },
+      { name: 'capability',    type: 'uint8'   },
+      { name: 'checkValidity', type: 'bool'    },
+      { name: 'seed',          type: 'uint256' },
+      { name: 'maxProbes',     type: 'uint256' },
     ],
     outputs: [
       { name: 'teeAddress', type: 'address' },
@@ -145,19 +154,18 @@ export const teeRegistryAbi = [
 // ── LLM output decoder ────────────────────────────────────────────────────────
 
 export interface VerdictResult {
-  score: number      // 0-100
-  reason: string
-  error?: string
+  score:            number    // 0-100, -1 = unknown
+  reason:           string
+  error?:           string
+  requestedBy?:     Address
+  cachedAtTimestamp?: number  // unix seconds
+  balanceHex?:      string
+  txCountHex?:      string
 }
 
 // Decodes the raw actualOutput bytes stored on-chain by analyzeReputation().
 // Structure: abi.decode(raw, (bool hasError, bytes completionData, bytes modelMetadata,
 //                              string errorMessage, (string,string,string) updatedConvoHistory))
-// completionData: (string id, string object, uint256 created, string model,
-//                  string systemFingerprint, string serviceTier,
-//                  uint256 choicesCount, bytes[] choicesData, bytes usageData)
-// choicesData[0]: (uint256 index, string finishReason, bytes messageData)
-// messageData:    (string role, string content, string refusal, uint256 toolCallsCount, bytes[] toolCallsData)
 export function decodeLLMOutput(raw: Hex): VerdictResult {
   try {
     const [hasError, completionData, , errorMessage] = decodeAbiParameters(
@@ -195,11 +203,9 @@ export function decodeLLMOutput(raw: Hex): VerdictResult {
 }
 
 function parseVerdictFromContent(raw: string): VerdictResult {
-  // GLM-4.7-FP8 emits <think>...</think> blocks before its final answer.
-  // Strip the entire think block before parsing JSON.
+  // GLM-4.7-FP8 emits <think>...</think> blocks before the final answer — strip them.
   const stripped = raw.replace(/<think>[\s\S]*?<\/think>/g, '').trim()
 
-  // Find the first JSON object in the output
   const match = stripped.match(/\{[\s\S]*\}/)
   if (!match) {
     return { score: -1, reason: stripped, error: 'No JSON found in LLM response' }
@@ -220,7 +226,7 @@ function parseVerdictFromContent(raw: string): VerdictResult {
   }
 }
 
-// ── Verdict colour helpers ────────────────────────────────────────────────────
+// ── Display helpers ───────────────────────────────────────────────────────────
 
 export type VerdictLevel = 'safe' | 'caution' | 'danger' | 'unknown'
 
@@ -236,4 +242,36 @@ export const verdictConfig: Record<VerdictLevel, { label: string; colour: string
   caution: { label: 'SUSPICIOUS', colour: '#FACC15', bg: 'rgba(250,204,21,0.08)',  border: 'rgba(250,204,21,0.3)'  },
   danger:  { label: 'HIGH RISK',  colour: '#EF4444', bg: 'rgba(239,68,68,0.08)',   border: 'rgba(239,68,68,0.3)'   },
   unknown: { label: 'UNKNOWN',    colour: '#6B7280', bg: 'rgba(107,114,128,0.08)', border: 'rgba(107,114,128,0.3)' },
+}
+
+// Hex wei string → "X.XXXX ETH" (4 decimal places).
+export function hexToEth(hex: string | undefined): string {
+  if (!hex || hex === '0x' || hex === '0x0') return '0.0000 ETH'
+  try {
+    const wei = BigInt(hex)
+    const whole = wei / BigInt(1e18)
+    const frac  = Number((wei % BigInt(1e18)) / BigInt(1e14))
+    return `${whole}.${String(frac).padStart(4, '0')} ETH`
+  } catch {
+    return '—'
+  }
+}
+
+// Hex string → decimal string.
+export function hexToDecimal(hex: string | undefined): string {
+  if (!hex || hex === '0x') return '0'
+  try {
+    return String(BigInt(hex))
+  } catch {
+    return '—'
+  }
+}
+
+// Unix timestamp → human-readable date string.
+export function formatTimestamp(unix: number | undefined): string {
+  if (!unix) return '—'
+  return new Date(unix * 1000).toLocaleString('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  })
 }

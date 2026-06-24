@@ -8,24 +8,25 @@ contract VetraConsumer {
     address constant JQ_PRECOMPILE   = 0x0000000000000000000000000000000000000803;
 
     // ── Constants ─────────────────────────────────────────────────────────────
-    // Public JSON-RPC endpoint — no API key required
     string constant ETH_RPC   = "https://ethereum.publicnode.com";
     string constant LLM_MODEL = "zai-org/GLM-4.7-FP8";
 
     // ── Storage types ─────────────────────────────────────────────────────────
     struct AddressData {
-        string  balanceHex;
-        string  txCountHex;
-        bool    fetched;
+        string balanceHex;
+        string txCountHex;
+        bool   fetched;
     }
 
     struct CachedResult {
-        bytes   rawOutput;  // raw actualOutput from LLM precompile, decoded client-side
-        uint256 cachedAt;
+        bytes   rawOutput;
+        uint256 cachedAt;        // block number
+        uint256 cachedAtTime;    // block.timestamp (unix seconds)
+        address requestedBy;     // EOA that called analyzeReputation
         bool    exists;
     }
 
-    // StorageRef tuple for LLM convoHistory field (string,string,string)
+    // StorageRef tuple required by LLM precompile field 29
     struct StorageRef {
         string platform;
         string path;
@@ -34,13 +35,14 @@ contract VetraConsumer {
 
     // ── State ─────────────────────────────────────────────────────────────────
     address public immutable owner;
+    uint256 public totalAnalyzed;
 
     mapping(address => AddressData)  public addressData;
     mapping(address => CachedResult) private _results;
 
     // ── Events ────────────────────────────────────────────────────────────────
     event DataFetched(address indexed target, string balanceHex, string txCountHex);
-    event ReputationAnalyzed(address indexed target, uint256 blockNumber);
+    event ReputationAnalyzed(address indexed target, uint256 blockNumber, address indexed requestedBy);
     event CacheCleared(address indexed target);
 
     // ── Modifiers ─────────────────────────────────────────────────────────────
@@ -62,10 +64,12 @@ contract VetraConsumer {
     function getResult(address target) external view returns (
         bytes memory rawOutput,
         uint256 cachedAt,
-        bool exists
+        uint256 cachedAtTime,
+        address requestedBy,
+        bool    exists
     ) {
         CachedResult storage r = _results[target];
-        return (r.rawOutput, r.cachedAt, r.exists);
+        return (r.rawOutput, r.cachedAt, r.cachedAtTime, r.requestedBy, r.exists);
     }
 
     // ── Admin ─────────────────────────────────────────────────────────────────
@@ -78,12 +82,9 @@ contract VetraConsumer {
 
     // ── TX1: fetch on-chain data via HTTP + JQ ────────────────────────────────
     //
-    // Calls the public Ethereum JSON-RPC as a batch request to get balance and
-    // transaction count for `target`. JQ (synchronous) parses the response in the
-    // same transaction during fulfilled replay.
-    //
-    // Fee note: the EOA signing this TX must have a RitualWallet deposit.
-    //   TTL recommendation: 300 blocks.
+    // Sends a batch JSON-RPC request to publicnode.com for balance + tx count.
+    // JQ (synchronous) parses the response during fulfilled replay.
+    // TTL recommendation: 300 blocks.
     function fetchData(address target, address executor, uint256 ttl) external {
         string memory addrStr = _addrToString(target);
 
@@ -118,7 +119,6 @@ contract VetraConsumer {
 
         string memory bodyStr = string(respBody);
 
-        // JQ is synchronous — runs in the same fulfilled-replay transaction
         (bool ok1, bytes memory r1) = address(JQ_PRECOMPILE).staticcall(
             abi.encode(".[0].result", bodyStr, uint8(2))
         );
@@ -137,24 +137,28 @@ contract VetraConsumer {
 
     // ── TX2: score the address via LLM ────────────────────────────────────────
     //
-    // Reads stored AddressData from fetchData and feeds it to the LLM precompile.
-    // Raw actualOutput is stored on-chain for caching; decoded client-side.
-    //
-    // GLM-4.7-FP8 produces <think>...</think> blocks — strip them before JSON.parse.
+    // Reads stored AddressData, converts hex→human-readable values, then feeds
+    // to the LLM precompile. Raw actualOutput stored on-chain for client decoding.
     // TTL recommendation: 300 blocks. maxCompletionTokens must be >= 4096.
     function analyzeReputation(address target, address executor, uint256 ttl) external {
         require(addressData[target].fetched, "fetchData required first");
 
         AddressData memory d = addressData[target];
 
+        // Convert hex → human-readable for better LLM scoring accuracy
+        uint256 balWei  = _parseHex(d.balanceHex);
+        uint256 txCount = _parseHex(d.txCountHex);
+        string memory balEth = _weiToEth(balWei);
+        string memory txStr  = _uint256ToString(txCount);
+
         string memory messages = string.concat(
             '[{"role":"user","content":"Analyze this Ethereum address and score its suspiciousness. '
             'Address: ', _addrToString(target),
-            '. ETH balance (hex): ', d.balanceHex,
-            '. Transaction count (hex): ', d.txCountHex,
-            '. Respond ONLY with valid JSON (no markdown, no explanation): '
+            '. ETH balance: ', balEth,
+            '. Transaction count: ', txStr,
+            '. Respond ONLY with valid JSON (no markdown, no explanation, no code block): '
             '{\\\"score\\\":42,\\\"reason\\\":\\\"one sentence reason\\\"}. '
-            'Score is 0-100 where 0=fully trustworthy 100=extremely high risk."}]'
+            'Score is 0-100 where 0=fully trustworthy and 100=extremely high risk."}]'
         );
 
         (bool ok, bytes memory raw) = address(LLM_PRECOMPILE).call(
@@ -166,14 +170,13 @@ contract VetraConsumer {
 
         (, bytes memory actual) = abi.decode(raw, (bytes, bytes));
 
-        _results[target] = CachedResult(actual, block.number, true);
-        emit ReputationAnalyzed(target, block.number);
+        _results[target] = CachedResult(actual, block.number, block.timestamp, msg.sender, true);
+        totalAnalyzed++;
+        emit ReputationAnalyzed(target, block.number, msg.sender);
     }
 
     // ── Internal helpers ──────────────────────────────────────────────────────
 
-    // Builds the 30-field LLM precompile ABI payload.
-    // Requires via_ir = true in foundry.toml to avoid stack-too-deep.
     function _buildLLMPayload(
         address executor,
         uint256 ttl,
@@ -195,7 +198,7 @@ contract VetraConsumer {
             "",                // 11 metadataJson
             "",                // 12 modalitiesJson
             uint256(1),        // 13 n
-            true,              // 14 parallelToolCalls (ABI placeholder, always true)
+            true,              // 14 parallelToolCalls (ABI placeholder)
             int256(0),         // 15 presencePenalty (×1000)
             "medium",          // 16 reasoningEffort
             bytes(""),         // 17 responseFormatData
@@ -204,8 +207,8 @@ contract VetraConsumer {
             "",                // 20 stopJson
             false,             // 21 stream
             int256(700),       // 22 temperature (0.7 × 1000)
-            bytes(""),         // 23 toolChoiceData (ABI placeholder, always 0x)
-            bytes(""),         // 24 toolsData (ABI placeholder, always 0x)
+            bytes(""),         // 23 toolChoiceData
+            bytes(""),         // 24 toolsData
             int256(-1),        // 25 topLogprobs
             int256(1000),      // 26 topP (1.0 × 1000)
             "",                // 27 user
@@ -214,7 +217,7 @@ contract VetraConsumer {
         );
     }
 
-    // Decodes the JQ string output. JQ type-2 (string) returns abi.encode(bool ok, string result).
+    // JQ type-2 (string) output: abi.encode(bool ok, string result).
     // strLen is at data[64-95], string bytes start at data[96].
     function _decodeJQString(bytes memory raw) internal pure returns (string memory) {
         require(raw.length >= 96, "JQ: output too short");
@@ -225,6 +228,53 @@ contract VetraConsumer {
             result[i] = raw[96 + i];
         }
         return string(result);
+    }
+
+    // Parse a "0x..." hex string to uint256.
+    function _parseHex(string memory hexStr) internal pure returns (uint256 result) {
+        bytes memory b = bytes(hexStr);
+        uint256 start = (b.length >= 2 && b[0] == '0' && (b[1] == 'x' || b[1] == 'X')) ? 2 : 0;
+        for (uint256 i = start; i < b.length; i++) {
+            uint8 c = uint8(b[i]);
+            uint8 digit;
+            if      (c >= 0x30 && c <= 0x39) digit = c - 0x30;
+            else if (c >= 0x61 && c <= 0x66) digit = c - 0x61 + 10;
+            else if (c >= 0x41 && c <= 0x46) digit = c - 0x41 + 10;
+            else break;
+            result = result * 16 + digit;
+        }
+    }
+
+    // uint256 → decimal string.
+    function _uint256ToString(uint256 n) internal pure returns (string memory) {
+        if (n == 0) return "0";
+        uint256 temp = n;
+        uint256 len;
+        while (temp > 0) { len++; temp /= 10; }
+        bytes memory buf = new bytes(len);
+        uint256 idx = len;
+        while (n > 0) { buf[--idx] = bytes1(uint8(48 + n % 10)); n /= 10; }
+        return string(buf);
+    }
+
+    // wei → "X.XXXX ETH" (4 decimal places, precision = 0.0001 ETH).
+    function _weiToEth(uint256 wei_) internal pure returns (string memory) {
+        uint256 whole = wei_ / 1e18;
+        uint256 frac  = (wei_ % 1e18) / 1e14;
+        return string.concat(
+            _uint256ToString(whole), ".", _padLeft(_uint256ToString(frac), 4), " ETH"
+        );
+    }
+
+    // Left-pad string with '0's to totalLen.
+    function _padLeft(string memory s, uint256 totalLen) internal pure returns (string memory) {
+        bytes memory b = bytes(s);
+        if (b.length >= totalLen) return s;
+        uint256 padLen = totalLen - b.length;
+        bytes memory padded = new bytes(totalLen);
+        for (uint256 i = 0; i < padLen; i++) padded[i] = '0';
+        for (uint256 i = 0; i < b.length; i++) padded[padLen + i] = b[i];
+        return string(padded);
     }
 
     // Converts an address to its lowercase "0x..." hex string.

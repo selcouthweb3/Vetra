@@ -12,7 +12,7 @@ contract VetraConsumerTest is Test {
 
     // Mirror events for vm.expectEmit matching
     event DataFetched(address indexed target, string balanceHex, string txCountHex);
-    event ReputationAnalyzed(address indexed target, uint256 blockNumber);
+    event ReputationAnalyzed(address indexed target, uint256 blockNumber, address indexed requestedBy);
 
     function setUp() public {
         consumer = new VetraConsumer();
@@ -34,7 +34,7 @@ contract VetraConsumerTest is Test {
 
     function test_notCachedInitially() public view {
         assertFalse(consumer.isCached(TARGET));
-        (, , bool exists) = consumer.getResult(TARGET);
+        (, , , , bool exists) = consumer.getResult(TARGET);
         assertFalse(exists);
     }
 
@@ -110,13 +110,13 @@ contract VetraConsumerTest is Test {
         bytes memory llmRaw    = abi.encode(bytes(""), llmActual);
         vm.mockCall(address(0x0802), new bytes(0), llmRaw);
 
-        vm.expectEmit(true, false, false, true);
-        emit ReputationAnalyzed(TARGET, block.number);
+        vm.expectEmit(true, false, true, true);
+        emit ReputationAnalyzed(TARGET, block.number, address(this));
 
         consumer.analyzeReputation(TARGET, EXECUTOR, 300);
 
         assertTrue(consumer.isCached(TARGET));
-        (bytes memory stored, , bool exists) = consumer.getResult(TARGET);
+        (bytes memory stored, , , , bool exists) = consumer.getResult(TARGET);
         assertEq(stored, llmActual);
         assertTrue(exists);
     }
@@ -135,7 +135,7 @@ contract VetraConsumerTest is Test {
         vm.mockCall(address(0x0802), new bytes(0), abi.encode(bytes(""), second));
         consumer.analyzeReputation(TARGET, EXECUTOR, 300);
 
-        (bytes memory stored, , ) = consumer.getResult(TARGET);
+        (bytes memory stored, , , , ) = consumer.getResult(TARGET);
         assertEq(stored, second);
     }
 
