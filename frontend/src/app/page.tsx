@@ -1,11 +1,13 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, Suspense } from 'react'
 import { useAccount } from 'wagmi'
 import { isAddress, createPublicClient, http } from 'viem'
 import { Globe, Cpu, Database, Search, AlertCircle, Clock, Wallet } from 'lucide-react'
 import { toast } from 'sonner'
 import dynamic from 'next/dynamic'
+import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 
 import { useVetra } from '@/hooks/useVetra'
 import { StatCard }    from '@/components/StatCard'
@@ -34,10 +36,22 @@ const statsClient = createPublicClient({
   transport: http('https://rpc.ritualfoundation.org'),
 })
 
-export default function Home() {
-  const { isConnected, chainId } = useAccount()
+function HomeInner() {
+  const { isConnected, chainId, address: connectedWallet } = useAccount()
   const [input, setInput] = useState('')
   const { phase, verdict, txHash1, txHash2, error, analyze, reset } = useVetra()
+  const searchParams = useSearchParams()
+  const didPrefill = useRef(false)
+
+  // Pre-fill input from ?address= query param (used by Registry "Analyse →" button)
+  useEffect(() => {
+    if (didPrefill.current) return
+    const addr = searchParams?.get('address')
+    if (addr && isAddress(addr)) {
+      setInput(addr)
+      didPrefill.current = true
+    }
+  }, [searchParams])
 
   const [totalAnalyzed, setTotalAnalyzed] = useState<string>('—')
 
@@ -111,6 +125,12 @@ export default function Home() {
               </div>
               <span className="text-zinc-500">Ritual Testnet</span>
             </div>
+            <Link
+              href="/registry"
+              className="hidden sm:inline-flex text-xs text-zinc-500 hover:text-zinc-300 transition-colors duration-150 border border-zinc-800 hover:border-zinc-600 rounded-lg px-3 py-1.5"
+            >
+              Registry
+            </Link>
             <WalletBar />
           </div>
         </div>
@@ -279,6 +299,7 @@ export default function Home() {
               <VerdictCard
                 verdict={verdict}
                 cachedAddress={input.trim()}
+                connectedWallet={connectedWallet}
                 txHash1={txHash1}
                 txHash2={txHash2}
               />
@@ -358,5 +379,13 @@ export default function Home() {
       </footer>
 
     </div>
+  )
+}
+
+export default function Home() {
+  return (
+    <Suspense fallback={null}>
+      <HomeInner />
+    </Suspense>
   )
 }

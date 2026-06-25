@@ -13,6 +13,7 @@ import {
   decodeLLMOutput,
   type VerdictResult,
 } from '@/lib/ritual'
+import { appendHistory } from '@/lib/storage'
 
 // Account-free public client for all read-only calls.
 // wagmi's usePublicClient may include the connected account in eth_call 'from'
@@ -121,8 +122,10 @@ export function useVetra(): UseVetraReturn {
             functionName: 'addressData',
             args: [target],
           })
+          const decoded = decodeLLMOutput(rawOutput as Hex)
+          appendHistory(target, { score: decoded.score, timestamp: Number(cachedAtTime as bigint) })
           setVerdict({
-            ...decodeLLMOutput(rawOutput as Hex),
+            ...decoded,
             requestedBy:      requestedBy as Address,
             cachedAtTimestamp: Number(cachedAtTime as bigint),
             balanceHex:        balHex as string,
@@ -239,8 +242,13 @@ export function useVetra(): UseVetraReturn {
         }),
       ])
 
+      const finalDecoded = decodeLLMOutput(finalOutput as Hex)
+      appendHistory(target, {
+        score: finalDecoded.score,
+        timestamp: Number(cachedAtTime as bigint),
+      })
       setVerdict({
-        ...decodeLLMOutput(finalOutput as Hex),
+        ...finalDecoded,
         requestedBy:      requestedBy as Address,
         cachedAtTimestamp: Number(cachedAtTime as bigint),
         balanceHex:        balHex as string,

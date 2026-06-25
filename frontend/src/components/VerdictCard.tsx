@@ -1,14 +1,18 @@
 'use client'
 
 import { useState } from 'react'
-import { Copy, Share2, Check, ExternalLink } from 'lucide-react'
+import { Copy, Share2, Check, ExternalLink, Link } from 'lucide-react'
+import { toast } from 'sonner'
 import { type VerdictResult, scoreToVerdict, hexToEth, hexToDecimal, formatTimestamp } from '@/lib/ritual'
+import { FlagSection } from '@/components/FlagModal'
+import { ScoreHistory } from '@/components/ScoreHistory'
 import type { Hex } from 'viem'
 
 interface Props {
-  verdict:       VerdictResult
-  cachedAddress: string
-  txHash1?:      Hex | null
+  verdict:         VerdictResult
+  cachedAddress:   string
+  connectedWallet?: string
+  txHash1?:         Hex | null
   txHash2?:      Hex | null
 }
 
@@ -74,11 +78,12 @@ function truncateAddr(addr: string) {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`
 }
 
-export function VerdictCard({ verdict, cachedAddress, txHash1, txHash2 }: Props) {
+export function VerdictCard({ verdict, cachedAddress, connectedWallet, txHash1, txHash2 }: Props) {
   const level = scoreToVerdict(verdict.score)
   const band  = BANDS[level]
-  const [copied, setCopied] = useState(false)
-  const [shared, setShared] = useState(false)
+  const [copied,       setCopied]       = useState(false)
+  const [sharedText,   setSharedText]   = useState(false)
+  const [sharedLink,   setSharedLink]   = useState(false)
 
   const ethBalance = hexToEth(verdict.balanceHex)
   const txCount    = hexToDecimal(verdict.txCountHex)
@@ -91,18 +96,27 @@ export function VerdictCard({ verdict, cachedAddress, txHash1, txHash2 }: Props)
     })
   }
 
-  function shareVerdict() {
+  function shareVerdictText() {
     const text = [
       `Vetra Reputation Report`,
       `Address: ${cachedAddress}`,
       `Risk Score: ${verdict.score < 0 ? '?' : verdict.score}/100 (${band.label})`,
       verdict.reason ? `"${verdict.reason}"` : '',
-      `Powered by Ritual Testnet — vetra.xyz`,
+      `Powered by Ritual — ${window.location.origin}/check/${cachedAddress}`,
     ].filter(Boolean).join('\n')
 
     navigator.clipboard.writeText(text).then(() => {
-      setShared(true)
-      setTimeout(() => setShared(false), 1500)
+      setSharedText(true)
+      setTimeout(() => setSharedText(false), 1500)
+    })
+  }
+
+  function shareVerdictLink() {
+    const url = `${window.location.origin}/check/${cachedAddress}`
+    navigator.clipboard.writeText(url).then(() => {
+      setSharedLink(true)
+      toast.success('Link copied!', { id: 'share-link' })
+      setTimeout(() => setSharedLink(false), 1500)
     })
   }
 
@@ -137,6 +151,9 @@ export function VerdictCard({ verdict, cachedAddress, txHash1, txHash2 }: Props)
           <p className="text-xs text-rose-400">{verdict.error}</p>
         </div>
       )}
+
+      {/* Score History */}
+      <ScoreHistory address={cachedAddress} />
 
       {/* On-chain data */}
       {(verdict.balanceHex || verdict.txCountHex) && (
@@ -213,7 +230,7 @@ export function VerdictCard({ verdict, cachedAddress, txHash1, txHash2 }: Props)
         )}
 
         {/* Action buttons */}
-        <div className="mt-4 pt-4 border-t border-zinc-800/60 flex items-center gap-3">
+        <div className="mt-4 pt-4 border-t border-zinc-800/60 flex items-center flex-wrap gap-2">
           <button
             onClick={copyAddress}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-zinc-700 hover:border-zinc-500 text-zinc-400 hover:text-zinc-200 text-xs transition-all duration-150"
@@ -222,11 +239,18 @@ export function VerdictCard({ verdict, cachedAddress, txHash1, txHash2 }: Props)
             {copied ? 'Copied!' : 'Copy address'}
           </button>
           <button
-            onClick={shareVerdict}
+            onClick={shareVerdictText}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-zinc-700 hover:border-zinc-500 text-zinc-400 hover:text-zinc-200 text-xs transition-all duration-150"
           >
-            {shared ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Share2 className="w-3.5 h-3.5" />}
-            {shared ? 'Copied!' : 'Share verdict'}
+            {sharedText ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Share2 className="w-3.5 h-3.5" />}
+            {sharedText ? 'Copied!' : 'Share text'}
+          </button>
+          <button
+            onClick={shareVerdictLink}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-zinc-700 hover:border-zinc-500 text-zinc-400 hover:text-zinc-200 text-xs transition-all duration-150"
+          >
+            {sharedLink ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Link className="w-3.5 h-3.5" />}
+            {sharedLink ? 'Copied!' : 'Share link'}
           </button>
         </div>
 
@@ -236,6 +260,9 @@ export function VerdictCard({ verdict, cachedAddress, txHash1, txHash2 }: Props)
             heuristic, not definitive. Always do your own research.
           </p>
         </div>
+
+        {/* Flag section */}
+        <FlagSection address={cachedAddress} flagger={connectedWallet} />
       </div>
     </div>
   )
