@@ -3,19 +3,20 @@
 import { useState, useEffect, useRef, Suspense } from 'react'
 import { useAccount } from 'wagmi'
 import { isAddress, createPublicClient, http } from 'viem'
-import { Globe, Cpu, Database, Search, AlertCircle, Clock, Wallet } from 'lucide-react'
+import { Globe, Cpu, Database, Search, AlertCircle, Clock, Wallet, ChevronRight, FlaskConical } from 'lucide-react'
 import { toast } from 'sonner'
 import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 
 import { useVetra } from '@/hooks/useVetra'
-import { StatCard }    from '@/components/StatCard'
-import { FeatureCard } from '@/components/FeatureCard'
+import { useRegistry } from '@/hooks/useRegistry'
+import { StatCard }     from '@/components/StatCard'
+import { FeatureCard }  from '@/components/FeatureCard'
 import { PhaseStepper } from '@/components/PhaseStepper'
 import { VerdictCard }  from '@/components/VerdictCard'
 import { ErrorBanner }  from '@/components/ErrorBanner'
-import { VETRA_ADDRESS, vetraAbi, ritualChain } from '@/lib/ritual'
+import { VETRA_ADDRESS, vetraAbi, ritualChain, scoreToVerdict, type VerdictResult } from '@/lib/ritual'
 
 const WalletBar = dynamic(
   () => import('@/components/WalletBar').then(m => ({ default: m.WalletBar })),
@@ -30,18 +31,37 @@ const EXAMPLES = [
   { label: 'Scammer',  address: '0x098B716B8Aaf21512996dC57EB0615e2383E2f96' },
 ] as const
 
+const DEMO_ADDRESS = '0xdEAD000000000000000042069420694206942069'
+const DEMO_VERDICT: VerdictResult = {
+  score:  42,
+  reason: 'Moderate activity with mixed signals. This wallet has interacted with several DeFi protocols and shows a typical active-user pattern, but a handful of transactions touch contracts flagged for suspicious behavior. No definitive evidence of malicious intent — exercise caution before transacting.',
+  balanceHex: '0x16345785D8A0000',
+  txCountHex: '0x4d',
+}
+
 // Standalone client for stats reads (no wallet connection required)
 const statsClient = createPublicClient({
   chain: ritualChain,
   transport: http('https://rpc.ritualfoundation.org'),
 })
 
+const RISK_BADGE: Record<string, string> = {
+  safe:    'bg-emerald-400/10 text-emerald-400 border-emerald-400/30',
+  caution: 'bg-amber-400/10 text-amber-400 border-amber-400/30',
+  danger:  'bg-rose-400/10 text-rose-400 border-rose-400/30',
+  unknown: 'bg-zinc-800 text-zinc-500 border-zinc-700',
+}
+
 function HomeInner() {
   const { isConnected, chainId, address: connectedWallet } = useAccount()
-  const [input, setInput] = useState('')
+  const [input, setInput]       = useState('')
+  const [demoMode, setDemoMode] = useState(false)
   const { phase, verdict, txHash1, txHash2, error, analyze, reset } = useVetra()
+  const { entries: registryEntries, loading: registryLoading } = useRegistry()
   const searchParams = useSearchParams()
-  const didPrefill = useRef(false)
+  const didPrefill   = useRef(false)
+
+  const previewEntries = registryEntries.slice(0, 3)
 
   // Pre-fill input from ?address= query param (used by Registry "Analyse →" button)
   useEffect(() => {
@@ -65,9 +85,9 @@ function HomeInner() {
   }, [])
 
   const isValidAddress = isAddress(input.trim())
-  const busy         = !['idle', 'done', 'error'].includes(phase)
-  const wrongNetwork = isConnected && chainId !== 1979
-  const isTimeout    = !!error && error.includes('Timeout waiting for')
+  const busy           = !['idle', 'done', 'error'].includes(phase)
+  const wrongNetwork   = isConnected && chainId !== 1979
+  const isTimeout      = !!error && error.includes('Timeout waiting for')
 
   useEffect(() => {
     if (phase === 'tx1-pending')  toast.info('Fetching on-chain data…', { id: 'tx1' })
@@ -81,6 +101,7 @@ function HomeInner() {
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!isValidAddress || busy) return
+    setDemoMode(false)
     analyze(input.trim())
   }
 
@@ -92,7 +113,6 @@ function HomeInner() {
   function handleRetry() {
     const addr = input.trim()
     reset()
-    // analyze() immediately sets abortRef=false — safe to call right after reset()
     analyze(addr)
   }
 
@@ -127,8 +147,9 @@ function HomeInner() {
             </div>
             <Link
               href="/registry"
-              className="hidden sm:inline-flex text-xs text-zinc-500 hover:text-zinc-300 transition-colors duration-150 border border-zinc-800 hover:border-zinc-600 rounded-lg px-3 py-1.5"
+              className="hidden sm:inline-flex items-center gap-1.5 text-xs font-semibold text-teal-400 hover:text-teal-300 transition-colors duration-150 border border-teal-400/40 hover:border-teal-400/70 bg-teal-400/5 hover:bg-teal-400/10 rounded-lg px-3 py-1.5"
             >
+              <span className="w-1.5 h-1.5 rounded-full bg-teal-400 shrink-0" />
               Registry
             </Link>
             <WalletBar />
@@ -170,8 +191,6 @@ function HomeInner() {
                 value={input}
                 onChange={e => {
                   setInput(e.target.value)
-                  // Only abort an in-flight run; do not call reset() when idle
-                  // to avoid triggering the abortRef while no analysis is running.
                   if (!['idle', 'done', 'error'].includes(phase)) reset()
                 }}
                 placeholder="0x… Ethereum address"
@@ -207,25 +226,41 @@ function HomeInner() {
             )}
           </div>
 
-          {/* Example addresses */}
+          {/* Example addresses + Demo Mode toggle */}
           {phase === 'idle' && (
-            <div className="mt-4 flex items-center justify-center gap-2 flex-wrap">
-              <span className="text-xs text-zinc-600">Try:</span>
-              {EXAMPLES.map(({ label, address }) => (
-                <button
-                  key={label}
-                  type="button"
-                  onClick={() => fillExample(address)}
-                  className="px-3 py-1.5 text-xs rounded-full border border-zinc-800 hover:border-zinc-600 text-zinc-500 hover:text-zinc-300 transition-all duration-150"
-                >
-                  {label}
-                </button>
-              ))}
+            <div className="mt-4 flex flex-col items-center gap-3">
+              <div className="flex items-center justify-center gap-2 flex-wrap">
+                <span className="text-xs text-zinc-600">Try:</span>
+                {EXAMPLES.map(({ label, address }) => (
+                  <button
+                    key={label}
+                    type="button"
+                    onClick={() => fillExample(address)}
+                    className="px-3 py-1.5 text-xs rounded-full border border-zinc-800 hover:border-zinc-600 text-zinc-500 hover:text-zinc-300 transition-all duration-150"
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setDemoMode(d => !d)}
+                className={[
+                  'flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium border transition-all duration-150',
+                  demoMode
+                    ? 'border-amber-400/60 bg-amber-400/10 text-amber-400 hover:bg-amber-400/15'
+                    : 'border-zinc-700 text-zinc-500 hover:text-zinc-300 hover:border-zinc-500',
+                ].join(' ')}
+              >
+                <FlaskConical className="w-3.5 h-3.5" />
+                {demoMode ? 'Demo Mode ON — click to disable' : 'Try Demo Mode (no wallet needed)'}
+              </button>
             </div>
           )}
 
           {/* Connect wallet prompt */}
-          {!isConnected && phase === 'idle' && (
+          {!isConnected && phase === 'idle' && !demoMode && (
             <div className="mt-5 flex items-center justify-center gap-2 text-sm text-zinc-500">
               <Wallet className="w-4 h-4 text-zinc-600" />
               Connect a wallet to begin
@@ -239,7 +274,7 @@ function HomeInner() {
       </section>
 
       {/* ── Stats bar ──────────────────────────────────────────────────── */}
-      <section className="max-w-7xl mx-auto px-6 pb-12">
+      <section className="max-w-7xl mx-auto px-6 pb-10">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <StatCard label="ADDRESSES SCANNED" value={totalAnalyzed} sub="on Ritual Testnet" />
           <StatCard label="ON-CHAIN CACHE"     value="∞"            sub="no expiry by default" />
@@ -248,9 +283,89 @@ function HomeInner() {
         </div>
       </section>
 
+      {/* ── Community Registry preview ──────────────────────────────────── */}
+      <section className="max-w-7xl mx-auto px-6 pb-10">
+        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/30 overflow-hidden">
+
+          <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800/60">
+            <div>
+              <div className="text-xs font-medium tracking-widest text-zinc-500 mb-0.5">COMMUNITY REGISTRY</div>
+              <div className="text-sm font-semibold text-zinc-200">Recently analyzed addresses</div>
+            </div>
+            <Link
+              href="/registry"
+              className="flex items-center gap-1 text-xs font-semibold text-teal-400 hover:text-teal-300 transition-colors duration-150"
+            >
+              View All <ChevronRight className="w-3.5 h-3.5" />
+            </Link>
+          </div>
+
+          {/* Loading skeleton */}
+          {registryLoading && previewEntries.length === 0 && (
+            <div className="px-5 py-4 space-y-3">
+              {[0, 1, 2].map(i => (
+                <div key={i} className="h-10 rounded-lg bg-zinc-800/50 animate-pulse" />
+              ))}
+            </div>
+          )}
+
+          {/* Empty state */}
+          {!registryLoading && previewEntries.length === 0 && (
+            <div className="px-5 py-8 text-center">
+              <p className="text-sm text-zinc-600">No addresses analyzed yet — be the first.</p>
+            </div>
+          )}
+
+          {/* Entries */}
+          {previewEntries.map((entry, i) => {
+            const level = entry.score !== null ? scoreToVerdict(entry.score) : 'unknown'
+            return (
+              <div
+                key={entry.address}
+                className={`flex items-center justify-between px-5 py-3.5 hover:bg-zinc-900/60 transition-colors duration-150 ${
+                  i < previewEntries.length - 1 ? 'border-b border-zinc-800/60' : ''
+                }`}
+              >
+                <a
+                  href={`${EXPLORER_ADDR}/${entry.address}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-mono text-xs text-zinc-400 hover:text-zinc-200 transition-colors duration-150 truncate flex-1 mr-4"
+                >
+                  <span className="hidden sm:inline">{entry.address}</span>
+                  <span className="inline sm:hidden">{entry.address.slice(0, 10)}…{entry.address.slice(-6)}</span>
+                </a>
+                {entry.score !== null ? (
+                  <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium border shrink-0 ${RISK_BADGE[level]}`}>
+                    <span className="font-bold font-mono">{entry.score}</span>
+                    <span className="opacity-70 text-[10px]">/ 100</span>
+                  </span>
+                ) : (
+                  <span className={`inline-flex px-2.5 py-1 rounded-full text-xs border shrink-0 ${RISK_BADGE.unknown}`}>
+                    Pending
+                  </span>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </section>
+
       {/* ── Result area ────────────────────────────────────────────────── */}
       <section className="max-w-2xl mx-auto px-6 pb-12">
-        {phase === 'idle' ? (
+        {demoMode ? (
+          <>
+            <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-amber-400/30 bg-amber-400/5 text-amber-300 text-xs font-medium mb-4">
+              <FlaskConical className="w-3.5 h-3.5 shrink-0" />
+              Demo Mode — not a real on-chain result
+            </div>
+            <VerdictCard
+              verdict={DEMO_VERDICT}
+              cachedAddress={DEMO_ADDRESS}
+              connectedWallet={connectedWallet}
+            />
+          </>
+        ) : phase === 'idle' ? (
           <div className="flex flex-col items-center justify-center py-16 text-center">
             <div className="w-20 h-20 rounded-2xl bg-violet-400/10 flex items-center justify-center mb-4">
               <Search className="w-9 h-9 text-violet-400/40" />
@@ -309,7 +424,7 @@ function HomeInner() {
       </section>
 
       {/* ── How it works ───────────────────────────────────────────────── */}
-      {phase === 'idle' && (
+      {(phase === 'idle' || demoMode) && (
         <section className="max-w-7xl mx-auto px-6 py-16 border-t border-zinc-800/60">
           <div className="text-center mb-12">
             <div className="text-xs font-medium tracking-widest text-violet-400 mb-3">HOW IT WORKS</div>
