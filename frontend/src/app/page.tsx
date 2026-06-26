@@ -1,9 +1,9 @@
 'use client'
 
-import { useState, useEffect, useRef, Suspense } from 'react'
+import { useState, useEffect, useRef, Suspense, useCallback } from 'react'
 import { useAccount } from 'wagmi'
 import { isAddress, createPublicClient, http } from 'viem'
-import { Globe, Cpu, Database, Search, AlertCircle, Clock, Wallet, ChevronRight, FlaskConical } from 'lucide-react'
+import { Globe, Cpu, Database, Search, AlertCircle, Clock, Wallet, ChevronRight, Route, X } from 'lucide-react'
 import { toast } from 'sonner'
 import dynamic from 'next/dynamic'
 import Link from 'next/link'
@@ -16,7 +16,7 @@ import { FeatureCard }  from '@/components/FeatureCard'
 import { PhaseStepper } from '@/components/PhaseStepper'
 import { VerdictCard }  from '@/components/VerdictCard'
 import { ErrorBanner }  from '@/components/ErrorBanner'
-import { VETRA_ADDRESS, vetraAbi, ritualChain, scoreToVerdict, type VerdictResult } from '@/lib/ritual'
+import { VETRA_ADDRESS, vetraAbi, ritualChain, scoreToVerdict } from '@/lib/ritual'
 
 const WalletBar = dynamic(
   () => import('@/components/WalletBar').then(m => ({ default: m.WalletBar })),
@@ -31,14 +31,6 @@ const EXAMPLES = [
   { label: 'Scammer',  address: '0x098B716B8Aaf21512996dC57EB0615e2383E2f96' },
 ] as const
 
-const DEMO_ADDRESS = '0xdEAD000000000000000042069420694206942069'
-const DEMO_VERDICT: VerdictResult = {
-  score:  42,
-  reason: 'Moderate activity with mixed signals. This wallet has interacted with several DeFi protocols and shows a typical active-user pattern, but a handful of transactions touch contracts flagged for suspicious behavior. No definitive evidence of malicious intent — exercise caution before transacting.',
-  balanceHex: '0x16345785D8A0000',
-  txCountHex: '0x4d',
-}
-
 // Standalone client for stats reads (no wallet connection required)
 const statsClient = createPublicClient({
   chain: ritualChain,
@@ -52,16 +44,161 @@ const RISK_BADGE: Record<string, string> = {
   unknown: 'bg-zinc-800 text-zinc-500 border-zinc-700',
 }
 
+// ── Roadmap data ─────────────────────────────────────────────────────────────
+
+type PhaseStatus = 'complete' | 'in-progress' | 'upcoming'
+
+interface RoadmapPhase {
+  n:      number
+  title:  string
+  status: PhaseStatus
+  items:  string[]
+}
+
+const ROADMAP: RoadmapPhase[] = [
+  {
+    n: 1, title: 'Foundation', status: 'complete',
+    items: [
+      'Smart contract with HTTP + LLM precompiles on Ritual testnet',
+      'Wallet reputation scoring (0–100 risk scale)',
+      'On-chain caching of verdicts',
+      'GLM-4.7-FP8 in TEE executor',
+    ],
+  },
+  {
+    n: 2, title: 'Community Layer', status: 'complete',
+    items: [
+      'Community Registry — last 20 analyzed addresses',
+      'Address flagging system with reasons',
+      'Score history tracking per address',
+      'Shareable verdict URLs (/check/[address])',
+      'Share buttons on verdict cards',
+    ],
+  },
+  {
+    n: 3, title: 'Intelligence Upgrade', status: 'in-progress',
+    items: [
+      'Richer on-chain data (ETH balance, tx count, contract interactions)',
+      'Multi-signal scoring (not just balance + tx count)',
+      'Batch analysis — scan up to 5 addresses at once',
+      'Score trend alerts',
+    ],
+  },
+  {
+    n: 4, title: 'Ritual Native', status: 'upcoming',
+    items: [
+      'Full Ritual SDK integration',
+      'Scheduler precompile for automated re-analysis',
+      'Ed25519 signature verification for verdicts',
+      'Cross-chain reputation (not just Ethereum)',
+    ],
+  },
+  {
+    n: 5, title: 'Launch Ready', status: 'upcoming',
+    items: [
+      'Mainnet deployment when Ritual launches',
+      'Public API for reputation scores',
+      "Builder's Hub submission",
+      'Documentation and SDK',
+    ],
+  },
+]
+
+const STATUS_CFG: Record<PhaseStatus, { badge: string; dot: string; ring: string; cls: string }> = {
+  'complete':    { badge: 'COMPLETE',    dot: 'bg-teal-400',  ring: 'ring-4 ring-teal-400/20',  cls: 'border-teal-400/40 text-teal-400 bg-teal-400/10'   },
+  'in-progress': { badge: 'IN PROGRESS', dot: 'bg-amber-400', ring: 'ring-4 ring-amber-400/20', cls: 'border-amber-400/40 text-amber-400 bg-amber-400/10' },
+  'upcoming':    { badge: 'UPCOMING',    dot: 'bg-zinc-700',  ring: 'ring-4 ring-zinc-700/20',  cls: 'border-zinc-700 text-zinc-500 bg-zinc-800/50'       },
+}
+
+// ── Roadmap Modal ────────────────────────────────────────────────────────────
+
+function RoadmapModal({ onClose }: { onClose: () => void }) {
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [onClose])
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-zinc-950/80 backdrop-blur-sm animate-fade-in"
+      onClick={e => { if (e.target === e.currentTarget) onClose() }}
+    >
+      <div className="w-full max-w-2xl max-h-[85vh] rounded-2xl border border-zinc-800 bg-zinc-900 flex flex-col overflow-hidden shadow-2xl">
+
+        {/* Modal header */}
+        <div className="flex items-start justify-between px-6 py-5 border-b border-zinc-800 shrink-0">
+          <div>
+            <h2 className="text-lg font-bold tracking-tight text-zinc-100">Vetra Roadmap</h2>
+            <p className="text-xs text-zinc-500 mt-1">Building onchain reputation intelligence on Ritual</p>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-zinc-600 hover:text-zinc-300 transition-colors duration-150 ml-4 mt-0.5"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Scrollable timeline body */}
+        <div className="overflow-y-auto px-6 py-6">
+          {ROADMAP.map((phase, i) => {
+            const cfg     = STATUS_CFG[phase.status]
+            const isLast  = i === ROADMAP.length - 1
+            return (
+              <div
+                key={phase.n}
+                className="flex gap-4 animate-fade-slide-in"
+                style={{ animationDelay: `${i * 60}ms` }}
+              >
+                {/* Timeline spine */}
+                <div className="flex flex-col items-center">
+                  <div className={`w-3 h-3 rounded-full mt-1 shrink-0 ${cfg.dot} ${cfg.ring}`} />
+                  {!isLast && <div className="w-px flex-1 bg-zinc-800 mt-2 mb-0 min-h-[2.5rem]" />}
+                </div>
+
+                {/* Phase content */}
+                <div className={`flex-1 ${isLast ? 'pb-2' : 'pb-7'}`}>
+                  <div className="flex items-center flex-wrap gap-2 mb-2.5">
+                    <h3 className="text-sm font-semibold text-zinc-100">
+                      Phase {phase.n} — {phase.title}
+                    </h3>
+                    <span className={`text-[10px] font-semibold tracking-wider px-2 py-0.5 rounded-full border ${cfg.cls}`}>
+                      {cfg.badge}
+                    </span>
+                  </div>
+                  <ul className="space-y-1.5">
+                    {phase.items.map((item, j) => (
+                      <li key={j} className="flex items-start gap-2 text-sm text-zinc-500 leading-relaxed">
+                        <span className="mt-2 w-1 h-1 rounded-full bg-zinc-700 shrink-0" />
+                        {item}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Home page ────────────────────────────────────────────────────────────────
+
 function HomeInner() {
   const { isConnected, chainId, address: connectedWallet } = useAccount()
-  const [input, setInput]       = useState('')
-  const [demoMode, setDemoMode] = useState(false)
+  const [input, setInput]             = useState('')
+  const [roadmapOpen, setRoadmapOpen] = useState(false)
   const { phase, verdict, txHash1, txHash2, error, analyze, reset } = useVetra()
   const { entries: registryEntries, loading: registryLoading } = useRegistry()
   const searchParams = useSearchParams()
   const didPrefill   = useRef(false)
 
   const previewEntries = registryEntries.slice(0, 3)
+
+  const closeRoadmap = useCallback(() => setRoadmapOpen(false), [])
 
   // Pre-fill input from ?address= query param (used by Registry "Analyse →" button)
   useEffect(() => {
@@ -101,7 +238,6 @@ function HomeInner() {
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!isValidAddress || busy) return
-    setDemoMode(false)
     analyze(input.trim())
   }
 
@@ -123,6 +259,9 @@ function HomeInner() {
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100">
+
+      {/* ── Roadmap modal ───────────────────────────────────────────────── */}
+      {roadmapOpen && <RoadmapModal onClose={closeRoadmap} />}
 
       {/* ── Header ─────────────────────────────────────────────────────── */}
       <header className="sticky top-0 z-50 border-b border-zinc-800 bg-zinc-950/80 backdrop-blur-xl">
@@ -226,41 +365,25 @@ function HomeInner() {
             )}
           </div>
 
-          {/* Example addresses + Demo Mode toggle */}
+          {/* Example addresses */}
           {phase === 'idle' && (
-            <div className="mt-4 flex flex-col items-center gap-3">
-              <div className="flex items-center justify-center gap-2 flex-wrap">
-                <span className="text-xs text-zinc-600">Try:</span>
-                {EXAMPLES.map(({ label, address }) => (
-                  <button
-                    key={label}
-                    type="button"
-                    onClick={() => fillExample(address)}
-                    className="px-3 py-1.5 text-xs rounded-full border border-zinc-800 hover:border-zinc-600 text-zinc-500 hover:text-zinc-300 transition-all duration-150"
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setDemoMode(d => !d)}
-                className={[
-                  'flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium border transition-all duration-150',
-                  demoMode
-                    ? 'border-amber-400/60 bg-amber-400/10 text-amber-400 hover:bg-amber-400/15'
-                    : 'border-zinc-700 text-zinc-500 hover:text-zinc-300 hover:border-zinc-500',
-                ].join(' ')}
-              >
-                <FlaskConical className="w-3.5 h-3.5" />
-                {demoMode ? 'Demo Mode ON — click to disable' : 'Try Demo Mode (no wallet needed)'}
-              </button>
+            <div className="mt-4 flex items-center justify-center gap-2 flex-wrap">
+              <span className="text-xs text-zinc-600">Try:</span>
+              {EXAMPLES.map(({ label, address }) => (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => fillExample(address)}
+                  className="px-3 py-1.5 text-xs rounded-full border border-zinc-800 hover:border-zinc-600 text-zinc-500 hover:text-zinc-300 transition-all duration-150"
+                >
+                  {label}
+                </button>
+              ))}
             </div>
           )}
 
           {/* Connect wallet prompt */}
-          {!isConnected && phase === 'idle' && !demoMode && (
+          {!isConnected && phase === 'idle' && (
             <div className="mt-5 flex items-center justify-center gap-2 text-sm text-zinc-500">
               <Wallet className="w-4 h-4 text-zinc-600" />
               Connect a wallet to begin
@@ -353,19 +476,7 @@ function HomeInner() {
 
       {/* ── Result area ────────────────────────────────────────────────── */}
       <section className="max-w-2xl mx-auto px-6 pb-12">
-        {demoMode ? (
-          <>
-            <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-amber-400/30 bg-amber-400/5 text-amber-300 text-xs font-medium mb-4">
-              <FlaskConical className="w-3.5 h-3.5 shrink-0" />
-              Demo Mode — not a real on-chain result
-            </div>
-            <VerdictCard
-              verdict={DEMO_VERDICT}
-              cachedAddress={DEMO_ADDRESS}
-              connectedWallet={connectedWallet}
-            />
-          </>
-        ) : phase === 'idle' ? (
+        {phase === 'idle' ? (
           <div className="flex flex-col items-center justify-center py-16 text-center">
             <div className="w-20 h-20 rounded-2xl bg-violet-400/10 flex items-center justify-center mb-4">
               <Search className="w-9 h-9 text-violet-400/40" />
@@ -424,7 +535,7 @@ function HomeInner() {
       </section>
 
       {/* ── How it works ───────────────────────────────────────────────── */}
-      {(phase === 'idle' || demoMode) && (
+      {phase === 'idle' && (
         <section className="max-w-7xl mx-auto px-6 py-16 border-t border-zinc-800/60">
           <div className="text-center mb-12">
             <div className="text-xs font-medium tracking-widest text-violet-400 mb-3">HOW IT WORKS</div>
@@ -452,6 +563,19 @@ function HomeInner() {
               body="Verdicts are stored in the smart contract. Repeat queries for the same address are instant and completely free."
             />
           </div>
+        </section>
+      )}
+
+      {/* ── Roadmap CTA ────────────────────────────────────────────────── */}
+      {phase === 'idle' && (
+        <section className="max-w-7xl mx-auto px-6 pb-16 flex justify-center border-t border-zinc-800/60 pt-10">
+          <button
+            onClick={() => setRoadmapOpen(true)}
+            className="flex items-center gap-2 px-5 py-2.5 rounded-xl border border-teal-400/40 hover:border-teal-400/70 text-teal-400 hover:text-teal-300 bg-teal-400/5 hover:bg-teal-400/10 text-sm font-semibold transition-all duration-150"
+          >
+            <Route className="w-4 h-4" />
+            View Roadmap
+          </button>
         </section>
       )}
 

@@ -52,3 +52,22 @@ body {
   background-size: 200% 100%;
   animation: shimmer 1.5s infinite;
 }
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes fadeSlideIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0);   }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.15s ease forwards;
+}
+
+.animate-fade-slide-in {
+  opacity: 0;
+  animation: fadeSlideIn 0.25s ease forwards;
+}
